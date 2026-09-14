@@ -44,9 +44,11 @@ void BlurSettings::read()
 
     general.blurStrength = BlurConfig::blurStrength() - 1;
     general.noiseStrength = BlurConfig::noiseStrength();
-    general.decorationBlurStrength = BlurConfig::decorationBlurStrength() - 1;
+    // One global blur level is used by every glass surface. Keep the separate
+    // pipeline fields only as an internal compatibility detail.
+    general.decorationBlurStrength = general.blurStrength;
     general.decorationNoiseStrength = BlurConfig::decorationNoiseStrength();
-    general.dockBlurStrength = BlurConfig::dockBlurStrength() - 1;
+    general.dockBlurStrength = general.blurStrength;
     general.dockNoiseStrength = BlurConfig::dockNoiseStrength();
     general.brightness = BlurConfig::brightness();
     general.saturation = BlurConfig::saturation();
