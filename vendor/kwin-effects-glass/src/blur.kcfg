@@ -180,8 +180,17 @@
         <entry name="RefractionBevelIntensity" type="Int">
             <default>10</default>
         </entry>
-        <entry name="PhysicallyBasedRefraction" type="Bool">
-            <default>false</default>
+        <entry name="MaterialSoftness" type="Double">
+            <default>0.0</default>
+            <whatsthis>Shared material softness from 0.0 (clear liquid glass) to 1.0 (diffuse soft glass).</whatsthis>
+        </entry>
+        <entry name="MaterialHighlightStrength" type="Double">
+            <default>1.0</default>
+            <whatsthis>Strength of the narrow liquid highlight in the unified glass material.</whatsthis>
+        </entry>
+        <entry name="MaterialReflectionStrength" type="Double">
+            <default>0.0</default>
+            <whatsthis>Strength of the broad directional soft-glass reflection.</whatsthis>
         </entry>
     </group>
 </kcfg>

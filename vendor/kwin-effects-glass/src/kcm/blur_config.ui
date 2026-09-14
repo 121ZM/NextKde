@@ -1077,16 +1077,6 @@
             </layout>
            </item>
            <item>
-            <widget class="QCheckBox" name="kcfg_PhysicallyBasedRefraction">
-             <property name="text">
-              <string>Physically based refraction</string>
-             </property>
-             <property name="toolTip">
-              <string>Use a Snell's-law (IOR-based) refraction model instead. The Refraction Strength slider is reinterpreted as the index-of-refraction delta in this mode.</string>
-             </property>
-            </widget>
-           </item>
-           <item>
             <widget class="QLabel" name="labelRefractionOffsetStrength">
              <property name="enabled">
               <bool>false</bool>
@@ -1609,53 +1599,5 @@
    <slot>setChecked(bool)</slot>
   </connection>
   
-  <connection>
-   <sender>kcfg_PhysicallyBasedRefraction</sender>
-   <signal>toggled(bool)</signal>
-   <receiver>kcfg_RefractionOffsetStrength</receiver>
-   <slot>setEnabled(bool)</slot>
-  </connection>
-  <connection>
-   <sender>kcfg_PhysicallyBasedRefraction</sender>
-   <signal>toggled(bool)</signal>
-   <receiver>labelRefractionOffsetStrength</receiver>
-   <slot>setEnabled(bool)</slot>
-  </connection>
-  <connection>
-   <sender>kcfg_PhysicallyBasedRefraction</sender>
-   <signal>toggled(bool)</signal>
-   <receiver>labelRefractionOffsetStrengthOff</receiver>
-   <slot>setEnabled(bool)</slot>
-  </connection>
-  <connection>
-   <sender>kcfg_PhysicallyBasedRefraction</sender>
-   <signal>toggled(bool)</signal>
-   <receiver>labelRefractionOffsetStrengthStrong</receiver>
-   <slot>setEnabled(bool)</slot>
-  </connection>
-  <connection>
-   <sender>kcfg_PhysicallyBasedRefraction</sender>
-   <signal>toggled(bool)</signal>
-   <receiver>kcfg_RefractionBevelIntensity</receiver>
-   <slot>setEnabled(bool)</slot>
-  </connection>
-  <connection>
-   <sender>kcfg_PhysicallyBasedRefraction</sender>
-   <signal>toggled(bool)</signal>
-   <receiver>labelRefractionBevelIntensity</receiver>
-   <slot>setEnabled(bool)</slot>
-  </connection>
-  <connection>
-   <sender>kcfg_PhysicallyBasedRefraction</sender>
-   <signal>toggled(bool)</signal>
-   <receiver>labelRefractionBevelIntensityFlat</receiver>
-   <slot>setEnabled(bool)</slot>
-  </connection>
-  <connection>
-   <sender>kcfg_PhysicallyBasedRefraction</sender>
-   <signal>toggled(bool)</signal>
-   <receiver>labelRefractionBevelIntensityRound</receiver>
-   <slot>setEnabled(bool)</slot>
-  </connection>
  </connections>
 </ui>

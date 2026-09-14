@@ -85,7 +85,9 @@ struct RefractionSettings
     float refractionBevelIntensity;
     float highlightWidthPx;
     float highlightAngle;  // degrees, light direction for the focused highlight
-    bool physicallyBased;
+    float materialSoftness;
+    float materialHighlightStrength;
+    float materialReflectionStrength;
 };
 
 class BlurSettings

@@ -18,7 +18,9 @@ uniform float refractionNormalPow;
 uniform float refractionRGBFringing;
 uniform float refractionOffsetStrength;
 uniform float refractionBevelIntensity;
-uniform int physicallyBasedRefraction;
+uniform float materialSoftness;
+uniform float materialHighlightStrength;
+uniform float materialReflectionStrength;
 
 float roundedRectangleDist(vec2 p, vec2 b, vec4 cornerRadius)
 {
@@ -37,8 +39,6 @@ struct GlassFragment {
     vec3 normal;
     float ior;
 };
-
-#include "snells-glass.glsl"
 
 vec4 roundedRectangle(vec2 fragCoord, vec3 color, vec4 cornerRadius)
 {
@@ -283,12 +283,42 @@ vec3 applyLiquidGlints(vec3 rgb, vec2 position, vec2 halfBlurSize,
         / sideArcSigma, 2.0)) * pow(sideArcFacing, 1.8) * endcapSurface;
 
     float response = smoothstep(0.05, 0.75,
-        clamp(refractionStrength, 0.0, 1.0)) * surfaceScale;
+        clamp(refractionStrength, 0.0, 1.0)) * surfaceScale
+        * clamp(materialHighlightStrength, 0.0, 1.0);
     rgb = mix(rgb, vec3(0.965, 0.982, 1.0), clamp(
         (topGlint * 0.47 + bottomGlint * 0.30) * response, 0.0, 0.49));
     rgb = mix(rgb, vec3(0.86, 0.90, 0.95), clamp(
         (sideGlint * 0.17 + sideArcGlint * 0.14) * response, 0.0, 0.18));
     return rgb;
+}
+
+// One shared material stage for both presets. Soft glass does not select a
+// second shader: it increases low-frequency diffusion and a broad directional
+// reflection on top of the same edge-lens refraction used by liquid glass.
+vec3 applySoftMaterial(vec3 rgb, vec2 position, vec2 halfBlurSize,
+    vec4 cornerRadius, float dist, float edgeFactor)
+{
+    float softness = clamp(materialSoftness, 0.0, 1.0);
+    float reflection = clamp(materialReflectionStrength, 0.0, 1.0);
+
+    const vec3 lumaWeights = vec3(0.299, 0.587, 0.114);
+    float luma = dot(rgb, lumaWeights);
+    vec3 diffused = mix(rgb, vec3(luma), 0.22);
+    diffused = mix(diffused, smoothstep(vec3(0.0), vec3(1.0), diffused), 0.18);
+    rgb = mix(rgb, diffused, softness);
+
+    float minRadius = min(min(cornerRadius.x, cornerRadius.y),
+        min(cornerRadius.z, cornerRadius.w));
+    vec2 gradient = gradSdRoundedBox(position, halfBlurSize,
+        max(minRadius, 1.0));
+    vec2 outward = length(gradient) > 1e-5 ? normalize(gradient)
+        : vec2(0.0, 1.0);
+    vec2 lightDirection = normalize(vec2(-0.55, 0.84));
+    float directional = smoothstep(-0.15, 0.85, dot(outward, lightDirection));
+    float broadBand = pow(clamp(edgeFactor, 0.0, 1.0), 1.6);
+    float reflected = broadBand * directional * reflection * surfaceScale;
+    vec3 reflectionColor = getHighlightColor(rgb, mix(0.82, 1.0, directional));
+    return mix(rgb, reflectionColor, clamp(reflected * 0.34, 0.0, 0.32));
 }
 
 vec4 glass(vec4 sum, vec4 cornerRadius)
@@ -313,14 +343,14 @@ vec4 glass(vec4 sum, vec4 cornerRadius)
     GlassFragment s;
     if (refractionStrength > 0.0) {
         vec4 r = clamp(cornerRadius * 2.0, min(64.0, minHalfSize), min(128.0, minHalfSize));
-        s = physicallyBasedRefraction == 0
-            ? glassRefraction(position, halfBlurSize, r, dist, edgeFactor, concaveFactor)
-            : snellsRefraction(position, halfBlurSize, r, minHalfSize, dist, edgeFactor, concaveFactor);
+        s = glassRefraction(position, halfBlurSize, r, dist, edgeFactor, concaveFactor);
     } else {
         s = GlassFragment(sum, dist, edgeFactor, concaveFactor, vec3(0.0, 0.0, 1.0), 1.0);
     }
 
     vec3 rgb = applyGlassTint(s.color.rgb);
+    rgb = applySoftMaterial(rgb, position, halfBlurSize, cornerRadius, dist,
+        edgeFactor);
     rgb = applyLiquidGlints(rgb, position, halfBlurSize, cornerRadius, dist,
         edgeAntialiasWidth);
 

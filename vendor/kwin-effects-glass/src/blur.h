@@ -188,7 +188,9 @@ private:
         int refractionRGBFringingLocation;
         int refractionOffsetStrengthLocation;
         int refractionBevelIntensityLocation;
-        int physicallyBasedRefractionLocation;
+        int materialSoftnessLocation;
+        int materialHighlightStrengthLocation;
+        int materialReflectionStrengthLocation;
 
         int tintColorLocation;
         int tintGrayLocation;

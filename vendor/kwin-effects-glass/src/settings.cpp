@@ -99,7 +99,9 @@ void BlurSettings::read()
     refraction.refractionRGBFringing = BlurConfig::refractionRGBFringing() / 20.0;
     refraction.refractionOffsetStrength = BlurConfig::refractionOffsetStrength() / 2.0;
     refraction.refractionBevelIntensity = BlurConfig::refractionBevelIntensity() / 10.0;
-    refraction.physicallyBased = BlurConfig::physicallyBasedRefraction();
+    refraction.materialSoftness = std::clamp(BlurConfig::materialSoftness(), 0.0, 1.0);
+    refraction.materialHighlightStrength = std::clamp(BlurConfig::materialHighlightStrength(), 0.0, 1.0);
+    refraction.materialReflectionStrength = std::clamp(BlurConfig::materialReflectionStrength(), 0.0, 1.0);
 }
 
 }
