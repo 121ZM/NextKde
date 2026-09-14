@@ -9,10 +9,6 @@ uniform int edgeLighting;
 uniform float edgeSizePixels;
 uniform float highlightWidthPx;
 uniform float highlightAngle;
-uniform float surfaceScale;
-// Optical distortion belongs to small, directly manipulated controls.  Large
-// persistent surfaces keep the material treatment but use a quieter lens.
-uniform float lensStrengthScale;
 uniform float refractionStrength;
 uniform float refractionNormalPow;
 uniform float refractionRGBFringing;
@@ -108,7 +104,7 @@ GlassFragment glassRefraction(vec2 position, vec2 halfBlurSize, vec4 cornerRadiu
     // strong the bend reads is a parameter choice (RefractionStrength), not a
     // shader constant.
     float finalStrength = min(0.4 * concaveFactor * refractionStrength, 1.0)
-        * lens * lensStrengthScale;
+        * lens;
 
     // Corner-weighted chromatic aberration (Kyant0): a real rectangular lens
     // fringes most at its corners and not at all on the axes, so the colour
@@ -118,7 +114,7 @@ GlassFragment glassRefraction(vec2 position, vec2 halfBlurSize, vec4 cornerRadiu
     vec2 centeredNorm = position / halfBlurSize;
     float cornerWeight = abs(centeredNorm.x * centeredNorm.y);
     float fringingFactor = refractionRGBFringing * 0.3
-        * (0.3 + 0.7 * cornerWeight) * lensStrengthScale;
+        * (0.3 + 0.7 * cornerWeight);
 
     vec2 refractOffsetG = -normal.xy * finalStrength;
     vec2 refractOffsetR = -normal.xy * finalStrength;
@@ -283,7 +279,7 @@ vec3 applyLiquidGlints(vec3 rgb, vec2 position, vec2 halfBlurSize,
         / sideArcSigma, 2.0)) * pow(sideArcFacing, 1.8) * endcapSurface;
 
     float response = smoothstep(0.05, 0.75,
-        clamp(refractionStrength, 0.0, 1.0)) * surfaceScale
+        clamp(refractionStrength, 0.0, 1.0))
         * clamp(materialHighlightStrength, 0.0, 1.0);
     rgb = mix(rgb, vec3(0.965, 0.982, 1.0), clamp(
         (topGlint * 0.47 + bottomGlint * 0.30) * response, 0.0, 0.49));
@@ -316,7 +312,7 @@ vec3 applySoftMaterial(vec3 rgb, vec2 position, vec2 halfBlurSize,
     vec2 lightDirection = normalize(vec2(-0.55, 0.84));
     float directional = smoothstep(-0.15, 0.85, dot(outward, lightDirection));
     float broadBand = pow(clamp(edgeFactor, 0.0, 1.0), 1.6);
-    float reflected = broadBand * directional * reflection * surfaceScale;
+    float reflected = broadBand * directional * reflection;
     vec3 reflectionColor = getHighlightColor(rgb, mix(0.82, 1.0, directional));
     return mix(rgb, reflectionColor, clamp(reflected * 0.34, 0.0, 0.32));
 }
