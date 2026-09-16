@@ -9,7 +9,21 @@ endif()
 file(READ shaders/compat_core.glsl COMPAT_CORE)
 #file(READ shaders/compat_legacy.glsl COMPAT_LEGACY)
 file(READ shaders/oklab.glsl OKLAB_SHADER)
+file(READ shaders/snells-glass.glsl SNELLS_GLASS_SHADER)
 file(READ shaders/glass.glsl GLASS_SHADER)
+
+# These files are consumed by file(READ) during configure rather than compiled
+# as ordinary sources. Without explicit configure dependencies, editing a GLSL
+# helper can leave the embedded shader -- and glass.so -- unchanged until some
+# unrelated CMake input happens to trigger regeneration.
+file(GLOB GLASS_CONFIGURE_SHADER_SOURCES
+    "${CMAKE_CURRENT_SOURCE_DIR}/shaders/*.glsl")
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+    ${GLASS_CONFIGURE_SHADER_SOURCES})
+
+# glass.glsl is inserted into the final fragment shader as text, so expand its
+# own helper include before that insertion.
+string(REPLACE "#include \"snells-glass.glsl\"" "${SNELLS_GLASS_SHADER}" GLASS_SHADER "${GLASS_SHADER}")
 
 # Generate a core shader variant from a single .glsl source.
 # Output goes into generated/ to keep source shaders/ clean.
@@ -41,9 +55,15 @@ generate_shader_variants(shaders/onscreen_rounded.glsl onscreen_rounded .frag)
 set(glass_SOURCES
     blur.cpp
     settings.cpp
+    surfaceshapemanager.cpp
     blur.qrc
     main.cpp
 )
+
+find_package(WaylandScanner REQUIRED)
+ecm_add_wayland_server_protocol(glass_SOURCES
+    PROTOCOL "${CMAKE_CURRENT_SOURCE_DIR}/../../../protocols/kos-surface-shape-v1.xml"
+    BASENAME kos-surface-shape-v1)
 
 kconfig_add_kcfg_files(glass_SOURCES
     blurconfig.kcfgc

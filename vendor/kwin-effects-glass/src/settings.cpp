@@ -60,17 +60,12 @@ void BlurSettings::read()
     general.upsampleOffset = finetune;
     general.saturationCompensation = BlurConfig::blurSaturationCompensation();
 
-    general.tintColor = BlurConfig::tintColor();
-    general.autoTintAlpha = BlurConfig::autoTintAlpha();
     general.glowColor = BlurConfig::glowColor();
     general.edgeLighting = BlurConfig::edgeLighting();
     general.edgeLightingDock = BlurConfig::edgeLightingDock();
     general.edgeLightingTooltip = BlurConfig::edgeLightingTooltip();
-    general.excludeDocks = BlurConfig::excludeDocks();
     general.excludeDecorations = BlurConfig::excludeDecorations();
-    general.excludeTooltips = BlurConfig::excludeTooltips();
-    general.excludeMenus = BlurConfig::excludeMenus();
-    general.excludeOSD = BlurConfig::excludeOSD();
+    general.shapeTrace = BlurConfig::shapeTrace();
 
     forceBlur.onlyQuickshell = BlurConfig::onlyQuickshell();
     forceBlur.windowClasses = parseWindowClasses(BlurConfig::windowClasses());
@@ -80,20 +75,22 @@ void BlurSettings::read()
     forceBlur.blurDocks = BlurConfig::blurDocks();
     forceBlur.skipEmptyDockBlurRegions = BlurConfig::skipEmptyDockBlurRegions();
 
-    roundedCorners.windowTopRadius = BlurConfig::topCornerRadius();
-    roundedCorners.windowBottomRadius = BlurConfig::bottomCornerRadius();
     roundedCorners.menuRadius = BlurConfig::menuCornerRadius();
     roundedCorners.dockRadius = BlurConfig::dockCornerRadius();
+    roundedCorners.cornerExponent = std::clamp(
+        static_cast<float>(BlurConfig::cornerExponent()), 2.0f, 8.0f);
     roundedCorners.useDeclaredCornerRadius = BlurConfig::useDeclaredCornerRadius();
     roundedCorners.ignoreContentBlurRegion = BlurConfig::ignoreContentBlurRegion();
-    roundedCorners.roundMaximized = BlurConfig::roundCornersOfMaximizedWindows();
     roundedCorners.dynamicCorners = BlurConfig::dynamicCorners();
-    roundedCorners.dynamicCornersExcludeWindows = BlurConfig::dynamicCornersExcludeWindows();
     roundedCorners.dynamicCornersExcludeDocks = BlurConfig::dynamicCornersExcludeDocks();
     roundedCorners.dynamicCornersExcludeTooltips = BlurConfig::dynamicCornersExcludeTooltips();
     roundedCorners.dynamicCornersExcludeMenus = BlurConfig::dynamicCornersExcludeMenus();
 
-    refraction.edgeSizePixels = BlurConfig::refractionEdgeSize() * 10;
+    // The setting is already expressed in logical pixels. Multiplying it here
+    // made a 28 px edge enter the shader as 280 px, where it was also reused
+    // as the Snell lens displacement and could pull the backdrop across an
+    // entire panel.
+    refraction.edgeSizePixels = BlurConfig::refractionEdgeSize();
     refraction.highlightWidthPx = BlurConfig::highlightWidthPx();
     refraction.highlightAngle = BlurConfig::highlightAngle();
     refraction.refractionStrength = BlurConfig::refractionStrength() / 20.0;

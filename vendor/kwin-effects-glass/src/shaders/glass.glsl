@@ -1,7 +1,3 @@
-uniform vec3 tintColor;
-uniform float tintGray;
-uniform float tintStrength;
-uniform int autoTintAlpha;
 uniform vec3 glowColor;
 uniform float glowStrength;
 uniform int edgeLighting;
@@ -17,6 +13,19 @@ uniform float refractionBevelIntensity;
 uniform float materialSoftness;
 uniform float materialHighlightStrength;
 uniform float materialReflectionStrength;
+uniform float cornerExponent;
+
+float squircleNorm(vec2 q)
+{
+    float exponent = clamp(cornerExponent, 2.0, 8.0);
+    if (exponent <= 2.0001)
+        return length(q);
+    if (q.x <= 0.0)
+        return q.y;
+    if (q.y <= 0.0)
+        return q.x;
+    return pow(pow(q.x, exponent) + pow(q.y, exponent), 1.0 / exponent);
+}
 
 float roundedRectangleDist(vec2 p, vec2 b, vec4 cornerRadius)
 {
@@ -24,7 +33,7 @@ float roundedRectangleDist(vec2 p, vec2 b, vec4 cornerRadius)
         ? (p.y > 0.0 ? cornerRadius.y : cornerRadius.w)
         : (p.y > 0.0 ? cornerRadius.x : cornerRadius.z);
     vec2 q = abs(p) - b + r;
-    return min(max(q.x, q.y), 0.0) + length(max(q, 0.0)) - r;
+    return min(max(q.x, q.y), 0.0) + squircleNorm(max(q, 0.0)) - r;
 }
 
 struct GlassFragment {
@@ -36,19 +45,7 @@ struct GlassFragment {
     float ior;
 };
 
-vec4 roundedRectangle(vec2 fragCoord, vec3 color, vec4 cornerRadius)
-{
-    vec2 halfblurSize = blurSize * 0.5;
-    vec2 p = fragCoord - halfblurSize;
-    float dist = roundedRectangleDist(p, halfblurSize, cornerRadius);
-
-    if (dist <= 0.0) {
-        return vec4(color, 1.0);
-    }
-
-    float s = smoothstep(0.0, 1.0, dist);
-    return vec4(color, mix(1.0, 0.0, s));
-}
+#include "snells-glass.glsl"
 
 // ── Kyant0 lens profile (circleMap) ───────────────────────────────────
 // Refraction in iOS glass is confined to a band near the edge and falls off
@@ -68,11 +65,19 @@ vec2 gradSdRoundedBox(vec2 p, vec2 b, float r)
 {
     vec2 q = abs(p) - b + r;
     vec2 sgn = sign(p);
-    vec2 outside = max(q, 0.0);
-    float lenOut = length(outside);
-    if (lenOut > 1e-5) {
-        return sgn * outside / lenOut;
+    float exponent = clamp(cornerExponent, 2.0, 8.0);
+    if (q.x > 0.0 && q.y > 0.0) {
+        float norm = squircleNorm(q);
+        if (norm > 1e-5) {
+            return sgn * vec2(pow(q.x, exponent - 1.0),
+                pow(q.y, exponent - 1.0))
+                * pow(norm, 1.0 - exponent);
+        }
     }
+    if (q.x > 0.0)
+        return vec2(sgn.x, 0.0);
+    if (q.y > 0.0)
+        return vec2(0.0, sgn.y);
     return (q.x > q.y) ? vec2(sgn.x, 0.0) : vec2(0.0, sgn.y);
 }
 
@@ -98,13 +103,27 @@ GlassFragment glassRefraction(vec2 position, vec2 halfBlurSize, vec4 cornerRadiu
     float bandT = 1.0 - clamp(interiorDist / bandWidth, 0.0, 1.0);
     float lens = circleMap(bandT);
 
-    // Displacement: the rim peak scales with refractionStrength (kwinrc /20,
-    // so 10 -> 0.5) through the original 0.4 coefficient. The lens profile
-    // (circleMap) and concaveFactor attenuate it toward the interior. How
-    // strong the bend reads is a parameter choice (RefractionStrength), not a
-    // shader constant.
-    float finalStrength = min(0.4 * concaveFactor * refractionStrength, 1.0)
-        * lens;
+    // Displacement is measured in source-texture pixels, never as a fraction
+    // of the whole offscreen texture.  The previous 0.4 UV-space offset could
+    // sample 40% across a surface at full strength, pulling unrelated bright
+    // wallpaper features into the rim.  Keep the lens visibly fluid but cap
+    // it to a bounded pixel range; the user setting supplies the requested
+    // lens radius. The edge remains modest while the body lens below carries
+    // the visible liquid motion.
+    float offsetPixels = min(max(refractionOffsetStrength, 0.0), 12.0);
+    vec2 edgeOffset = -normal.xy * halfpixel
+        * (offsetPixels * refractionStrength * concaveFactor * lens);
+
+    // One continuous volume lens for every Quickshell glass surface. Its
+    // displacement is zero at the exact centre and contour, strongest in the
+    // body between them, so textured backdrops visibly flow without creating
+    // an inset silhouette.
+    vec2 normalizedPos = position / max(halfBlurSize, vec2(1.0));
+    float bodyRadius = dot(normalizedPos, normalizedPos);
+    float bodyEnvelope = smoothstep(1.0, 0.12, bodyRadius);
+    vec2 bodyOffset = normalizedPos * halfpixel * min(
+        offsetPixels * refractionStrength * 5.0 * bodyEnvelope, 18.0);
+    vec2 finalOffset = edgeOffset + bodyOffset;
 
     // Corner-weighted chromatic aberration (Kyant0): a real rectangular lens
     // fringes most at its corners and not at all on the axes, so the colour
@@ -116,15 +135,15 @@ GlassFragment glassRefraction(vec2 position, vec2 halfBlurSize, vec4 cornerRadiu
     float fringingFactor = refractionRGBFringing * 0.3
         * (0.3 + 0.7 * cornerWeight);
 
-    vec2 refractOffsetG = -normal.xy * finalStrength;
-    vec2 refractOffsetR = -normal.xy * finalStrength;
-    vec2 refractOffsetB = -normal.xy * finalStrength;
+    vec2 refractOffsetG = finalOffset;
+    vec2 refractOffsetR = finalOffset;
+    vec2 refractOffsetB = finalOffset;
 
     if (fringingFactor > 0.0) {
         // Red bends most
-        refractOffsetR = -normal.xy * (finalStrength * (1.0 + fringingFactor));
+        refractOffsetR = finalOffset * (1.0 + fringingFactor);
         // Blue bends least
-        refractOffsetB = -normal.xy * (finalStrength * (1.0 - fringingFactor));
+        refractOffsetB = finalOffset * (1.0 - fringingFactor);
     }
 
     vec2 coordR = clamp(uv - refractOffsetR, 0.0, 1.0);
@@ -140,51 +159,6 @@ GlassFragment glassRefraction(vec2 position, vec2 halfBlurSize, vec4 cornerRadiu
     return GlassFragment(color, dist, edgeFactor, concaveFactor, vec3(0.0, 0.0, 1.0), 1.0);
 }
 
-// ── Bidirectional tint ────────────────────────────────────────────────
-// Tint strength scales with how far the backdrop brightness is from the
-// mid-point (0.5): a near-white or near-black background gets the full
-// configured strength, a mid-grey background gets almost none, and the
-// result is hard-capped at 15% so the glass never turns into painted
-// plastic. The tint *colour* flips from dark (configured tintColor) on
-// bright backgrounds to white on dark backgrounds, so the glass always
-// retains material depth instead of turning into a flat black slab.
-// These must be declared before glassOutline() because glassOutline applies
-// the tint to the backdrop.
-float adjustedTintStrength(float baseTintStrength, vec3 backgroundColor)
-{
-    float strength = clamp(baseTintStrength, 0.0, 1.0);
-
-    // Bright backdrops may deepen up to 28% so white text stays readable on
-    // white backgrounds; dark backdrops stay at 15% so the glass keeps its
-    // transparent liquid-glass look.
-    const vec3 grayscaleWeights = vec3(0.299, 0.587, 0.114);
-    float backgroundGray = dot(backgroundColor, grayscaleWeights);
-
-    float cap = mix(0.15, 0.28, smoothstep(0.70, 0.80, backgroundGray));
-
-    float useLocal = step(0.5, float(autoTintAlpha)) * step(0.001, strength);
-    if (useLocal < 0.5)
-        return min(strength, cap);
-
-    float deviation = abs(backgroundGray - 0.5) * 2.0;
-    float scale = mix(0.05, 1.0, deviation);
-
-    return min(strength * scale, cap);
-}
-
-vec3 bidirectionalTintColor(vec3 backgroundColor, vec3 darkTint)
-{
-    float useLocal = step(0.5, float(autoTintAlpha)) * step(0.001, tintStrength);
-    if (useLocal < 0.5)
-        return darkTint;
-
-    const vec3 grayscaleWeights = vec3(0.299, 0.587, 0.114);
-    float backgroundGray = dot(backgroundColor, grayscaleWeights);
-
-    float t = smoothstep(0.35, 0.65, backgroundGray);
-    return mix(vec3(1.0), darkTint, t);
-}
-
 // Rim highlight colour from the iOS render shader: on a dark backdrop the
 // rim is white for contrast; on a bright or colourful backdrop it keeps the
 // backdrop's own hue, brightened — the "vibrancy at the edge" that makes the
@@ -197,94 +171,88 @@ vec3 getHighlightColor(vec3 backgroundColor, float targetBrightness)
     float lumFactor = (luminance * 2.5) / (1.0 + luminance * 2.5);
     float satFactor = (maxComponent * 2.5) / (1.0 + maxComponent * 2.5);
     float colorInfluence = lumFactor * satFactor;
-    vec3 tinted = (backgroundColor / max(luminance, 0.001)) * targetBrightness;
-    return mix(vec3(targetBrightness), tinted, colorInfluence);
-}
-
-// Luminosity-preserving bidirectional tint with a content-adaptive
-// saturation lift. A plain mix() toward black/white darkens the backdrop's
-// luminance, which is what makes glass read as painted plastic. Keeping the
-// backdrop's own luminance and only nudging its chroma (the essence of iOS
-// "vibrancy") keeps the material transparent — and the chroma nudging scales
-// with the backdrop: dark surfaces get a richer boost (1.18), bright ones a
-// subtle dip (0.9), so the glass visibly reacts to what is behind it.
-vec3 applyGlassTint(vec3 backdrop)
-{
-    const vec3 grayscaleWeights = vec3(0.299, 0.587, 0.114);
-    float luma = dot(backdrop, grayscaleWeights);
-    // Keep the background recognisable rather than globally increasing its
-    // saturation. Dark backdrops receive only a small chroma recovery after
-    // blur; bright backdrops are very slightly restrained for legibility.
-    float adaptive = mix(1.10, 0.96, luma);
-    vec3 lifted = mix(vec3(luma), backdrop, adaptive);
-    float strength = adjustedTintStrength(tintStrength, lifted);
-    vec3 tintCol = bidirectionalTintColor(lifted, tintColor);
-    return mix(lifted, tintCol, strength);
+    vec3 hueLifted = (backgroundColor / max(luminance, 0.001)) * targetBrightness;
+    return mix(vec3(targetBrightness), hueLifted, colorInfluence);
 }
 
 // ── Edge-confined liquid reflection ───────────────────────────────────
-// Keep the material body untouched. These reflections are short, white
-// glints on the straight portions of the contour, not an all-around Fresnel
-// outline and not a dark inner bevel. Their centre is wider than their ends,
-// matching the shared QML glass component.
+// Keep the material body untouched. This retains main's narrow Gaussian edge
+// streaks and changes only which pair of edges receives the primary light.
+// There is deliberately no full dark contour or broad halo here.
 vec3 applyLiquidGlints(vec3 rgb, vec2 position, vec2 halfBlurSize,
     vec4 cornerRadius, float dist, float edgeAntialiasWidth)
 {
-    float topRadius = max(cornerRadius.x, cornerRadius.y);
-    float bottomRadius = max(cornerRadius.z, cornerRadius.w);
-    float leftRadius = max(cornerRadius.x, cornerRadius.z);
-    float rightRadius = max(cornerRadius.y, cornerRadius.w);
-    float horizontalHalfLength = max(halfBlurSize.x
-        - max(topRadius, bottomRadius) - 5.0, 0.0);
-    float verticalHalfLength = max(halfBlurSize.y
-        - max(leftRadius, rightRadius) - 12.0, 0.0);
-
-    float horizontalEnvelope = (1.0 - smoothstep(0.64, 1.0,
-        abs(position.x) / max(horizontalHalfLength, 1.0)))
-        * step(1.0, horizontalHalfLength);
-    float verticalEnvelope = (1.0 - smoothstep(0.56, 1.0,
-        abs(position.y) / max(verticalHalfLength, 1.0)))
-        * step(1.0, verticalHalfLength);
-    float widthScale = clamp(highlightWidthPx / 3.0, 0.80, 1.20);
-    float topSigma = max(edgeAntialiasWidth * 0.52,
-        mix(0.43, 0.76, horizontalEnvelope) * widthScale);
-    float bottomSigma = max(edgeAntialiasWidth * 0.48,
-        mix(0.40, 0.64, horizontalEnvelope) * widthScale);
-    float sideSigma = max(edgeAntialiasWidth * 0.48,
-        mix(0.42, 0.62, verticalEnvelope) * widthScale);
-
-    float topGlint = exp(-0.5 * pow((halfBlurSize.y - position.y - 1.0)
-        / topSigma, 2.0)) * horizontalEnvelope;
-    float bottomGlint = exp(-0.5 * pow((position.y + halfBlurSize.y - 1.0)
-        / bottomSigma, 2.0)) * horizontalEnvelope;
-    float sideGlint = (exp(-0.5 * pow((position.x + halfBlurSize.x - 1.0)
-        / sideSigma, 2.0)) + exp(-0.5 * pow((halfBlurSize.x - position.x - 1.0)
-        / sideSigma, 2.0))) * verticalEnvelope;
-
-    // A capsule has no straight vertical section. Give its two rounded end
-    // caps a very small reflection at their horizontal centre only; it fades
-    // before reaching the top/bottom joins, so this cannot close into a rim.
-    float endcapSurface = 1.0 - smoothstep(0.0, 12.0,
-        verticalHalfLength);
+    // Main's narrow Gaussian cross-section, now evaluated against the one SDF
+    // contour shared by straight edges and rounded corners. Four independent
+    // x/y lines leave the real contour at a corner and caused the visible gap.
     float minRadius = min(min(cornerRadius.x, cornerRadius.y),
         min(cornerRadius.z, cornerRadius.w));
     vec2 gradient = gradSdRoundedBox(position, halfBlurSize,
         max(minRadius, 1.0));
     vec2 outward = length(gradient) > 1e-5 ? normalize(gradient)
         : vec2(0.0, 1.0);
-    float sideArcFacing = smoothstep(0.46, 0.98, abs(outward.x));
-    float edgeDistance = -dist;
-    float sideArcSigma = max(edgeAntialiasWidth * 0.58, 0.72);
-    float sideArcGlint = exp(-0.5 * pow((edgeDistance - 1.0)
-        / sideArcSigma, 2.0)) * pow(sideArcFacing, 1.8) * endcapSurface;
 
+    float widthScale = clamp(highlightWidthPx / 3.0, 0.80, 1.20);
+    float straightSigma = max(edgeAntialiasWidth * 0.52,
+        0.62 * widthScale);
+    // A sub-pixel Gaussian is stable on an axis-aligned edge but aliases when
+    // a curved contour crosses the pixel grid diagonally. Widen only those
+    // diagonal arc samples to main's 0.72 px end-cap coverage; straight runs
+    // retain the original hairline. The normal makes this transition
+    // continuous through both tangents instead of introducing another join.
+    float arcDiagonal = clamp(2.0 * abs(outward.x * outward.y), 0.0, 1.0);
+    float arcCoverage = smoothstep(0.08, 0.72, arcDiagonal);
+    float arcSigma = max(0.72, edgeAntialiasWidth * 0.72);
+    float sigma = mix(straightSigma, max(straightSigma, arcSigma),
+        arcCoverage);
+    float edgeDistance = max(-dist, 0.0);
+    float contourLine = exp(-0.5 * pow((edgeDistance - 1.0) / sigma, 2.0));
+
+    // Keep the selected diagonal from the previous design. At 45 degrees the
+    // primary corner is top-left and the secondary corner is bottom-right.
+    // Each envelope is blended by the continuous SDF normal through the corner
+    // and decays over the full side length, so there is no tangent discontinuity.
+    float angle = radians(highlightAngle);
+    float angleX = cos(angle);
+    float angleY = sin(angle);
+    vec2 primarySign = vec2(angleX >= -0.0001 ? -1.0 : 1.0,
+        angleY >= -0.0001 ? 1.0 : -1.0);
+
+    float xProgress = clamp((position.x + halfBlurSize.x)
+        / max(halfBlurSize.x * 2.0, 1.0), 0.0, 1.0);
+    float yProgress = clamp((halfBlurSize.y - position.y)
+        / max(halfBlurSize.y * 2.0, 1.0), 0.0, 1.0);
+    float fromLeft = 1.0 - smoothstep(0.0, 1.0, xProgress);
+    float fromRight = 1.0 - smoothstep(0.0, 1.0, 1.0 - xProgress);
+    float fromTop = 1.0 - smoothstep(0.0, 1.0, yProgress);
+    float fromBottom = 1.0 - smoothstep(0.0, 1.0, 1.0 - yProgress);
+
+    float primaryHorizontalFade = primarySign.x < 0.0 ? fromLeft : fromRight;
+    float primaryVerticalFade = primarySign.y > 0.0 ? fromTop : fromBottom;
+    float secondaryHorizontalFade = primarySign.x < 0.0 ? fromRight : fromLeft;
+    float secondaryVerticalFade = primarySign.y > 0.0 ? fromBottom : fromTop;
+
+    float primaryHorizontalFacing = pow(max(outward.y * primarySign.y, 0.0), 0.78);
+    float primaryVerticalFacing = pow(max(outward.x * primarySign.x, 0.0), 0.78);
+    float secondaryHorizontalFacing = pow(max(-outward.y * primarySign.y, 0.0), 0.78);
+    float secondaryVerticalFacing = pow(max(-outward.x * primarySign.x, 0.0), 0.78);
+
+    float primaryEnvelope = min(1.0,
+        primaryHorizontalFacing * primaryHorizontalFade
+        + primaryVerticalFacing * primaryVerticalFade);
+    float secondaryEnvelope = min(1.0,
+        secondaryHorizontalFacing * secondaryHorizontalFade
+        + secondaryVerticalFacing * secondaryVerticalFade);
+    float primaryGlint = contourLine * primaryEnvelope;
+    float secondaryGlint = contourLine * secondaryEnvelope;
+
+    float strength = clamp(materialHighlightStrength, 0.0, 1.0);
     float response = smoothstep(0.05, 0.75,
-        clamp(refractionStrength, 0.0, 1.0))
-        * clamp(materialHighlightStrength, 0.0, 1.0);
-    rgb = mix(rgb, vec3(0.965, 0.982, 1.0), clamp(
-        (topGlint * 0.47 + bottomGlint * 0.30) * response, 0.0, 0.49));
-    rgb = mix(rgb, vec3(0.86, 0.90, 0.95), clamp(
-        (sideGlint * 0.17 + sideArcGlint * 0.14) * response, 0.0, 0.18));
+        clamp(refractionStrength, 0.0, 1.0)) * strength;
+    rgb = mix(rgb, vec3(1.0),
+        clamp(primaryGlint * 0.60 * response, 0.0, 0.60));
+    rgb = mix(rgb, vec3(1.0),
+        clamp(secondaryGlint * 0.50 * response, 0.0, 0.50));
     return rgb;
 }
 
@@ -317,12 +285,9 @@ vec3 applySoftMaterial(vec3 rgb, vec2 position, vec2 halfBlurSize,
     return mix(rgb, reflectionColor, clamp(reflected * 0.34, 0.0, 0.32));
 }
 
-vec4 glass(vec4 sum, vec4 cornerRadius)
+vec4 glass(vec4 sum, vec4 cornerRadius, vec2 position, vec2 halfBlurSize)
 {
-    vec2 halfBlurSize = blurSize * 0.5;
     float minHalfSize = min(halfBlurSize.x, halfBlurSize.y);
-
-    vec2 position = uv * blurSize - halfBlurSize.xy;
     float dist = roundedRectangleDist(position, halfBlurSize, cornerRadius);
     // Evaluate derivatives before the early return: doing so only in the
     // inside branch is undefined along the exact contour on some GPUs.
@@ -339,16 +304,22 @@ vec4 glass(vec4 sum, vec4 cornerRadius)
     GlassFragment s;
     if (refractionStrength > 0.0) {
         vec4 r = clamp(cornerRadius * 2.0, min(64.0, minHalfSize), min(128.0, minHalfSize));
-        s = glassRefraction(position, halfBlurSize, r, dist, edgeFactor, concaveFactor);
+        s = snellsRefraction(position, halfBlurSize, r, minHalfSize, dist,
+            edgeFactor, concaveFactor);
     } else {
         s = GlassFragment(sum, dist, edgeFactor, concaveFactor, vec3(0.0, 0.0, 1.0), 1.0);
     }
 
-    vec3 rgb = applyGlassTint(s.color.rgb);
+    vec3 rgb = s.color.rgb;
     rgb = applySoftMaterial(rgb, position, halfBlurSize, cornerRadius, dist,
         edgeFactor);
     rgb = applyLiquidGlints(rgb, position, halfBlurSize, cornerRadius, dist,
         edgeAntialiasWidth);
 
-    return roundedRectangle(uv * blurSize, rgb, cornerRadius);
+    // Opaque material only. The silhouette is cut once, by the caller, from the
+    // same box/radius/exponent -- so a stage that has its own box (one protocol
+    // shape among several) gets its own edge instead of this one's. Applying a
+    // second mask here is what the removed roundedRectangle() did, and it
+    // assumed a single window-wide box.
+    return vec4(rgb, 1.0);
 }

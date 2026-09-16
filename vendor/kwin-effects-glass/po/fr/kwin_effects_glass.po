@@ -320,18 +320,6 @@ msgid "The corner radius only applies to the blur region."
 msgstr "Le rayon des coins s'applique uniquement à la région floutée."
 
 #. i18n: ectx: property (text), widget (QLabel, label)
-#: src/kcm/blur_config.ui:789
-#, kde-format
-msgid "Window top corner radius"
-msgstr "Rayon du coin fenêtre supérieure"
-
-#. i18n: ectx: property (text), widget (QLabel, label)
-#: src/kcm/blur_config.ui:807
-#, kde-format
-msgid "Window bottom corner radius"
-msgstr "Rayon du coin fenêtre inférieur"
-
-#. i18n: ectx: property (text), widget (QLabel, label)
 #: src/kcm/blur_config.ui:825
 #, kde-format
 msgid "Menu corner radius"
@@ -354,12 +342,6 @@ msgstr "Utiliser le rayon des coins déclaré"
 #, kde-format
 msgid "Ignore content blur region"
 msgstr ""
-
-#. i18n: ectx: property (text), widget (QCheckBox, kcfg_RoundCornersOfMaximizedWindows)
-#: src/kcm/blur_config.ui:859
-#, kde-format
-msgid "Round maximized windows"
-msgstr "Arrondir les fenêtre maximisées"
 
 #. i18n: ectx: property (text), widget (QCheckBox, kcfg_DynamicCorners)
 #: src/kcm/blur_config.ui:866

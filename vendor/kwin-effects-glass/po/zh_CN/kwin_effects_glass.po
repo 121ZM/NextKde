@@ -141,12 +141,6 @@ msgstr "圆角"
 msgid "The corner radius only applies to the blur region."
 msgstr "圆角半径仅作用于模糊区域。"
 
-msgid "Window top corner radius"
-msgstr "窗口顶部圆角半径"
-
-msgid "Window bottom corner radius"
-msgstr "窗口底部圆角半径"
-
 msgid "Menu corner radius"
 msgstr "菜单圆角半径"
 
@@ -159,14 +153,8 @@ msgstr "使用客户端声明的圆角"
 msgid "Ignore content blur region"
 msgstr "忽略内容模糊区域"
 
-msgid "Round maximized windows"
-msgstr "最大化窗口也使用圆角"
-
 msgid "Dynamic corner radius"
 msgstr "动态圆角"
-
-msgid "Exclude windows"
-msgstr "排除普通窗口"
 
 msgid "Exclude docks"
 msgstr "排除 Dock"

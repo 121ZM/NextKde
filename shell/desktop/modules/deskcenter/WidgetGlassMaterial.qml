@@ -47,9 +47,11 @@ Item {
         pigmentSecondary.g * 0.42 + 0.58,
         pigmentSecondary.b * 0.42 + 0.58, 1.0)
 
-    LiquidGlassSurface {
+    LiquidGlassPanel {
+        id: panel
         anchors.fill: parent
         radius: root.cornerRadius
+        cornerExponent: AppearanceTokens.shape.cornerExponent
         material: "regular"
         materialDepth: 0.35
         surfaceOpacity: 0.92 * root.strength
@@ -64,63 +66,68 @@ Item {
         adaptiveDarkScrim: root.wallpaperLuminance > 0.54
         bottomEdgeVisible: true
         bottomShadeVisible: true
-    }
 
-    // This horizontal component combines with LiquidGlassSurface's existing
-    // top-white/bottom-black finish, producing a *static* diagonal light
-    // field: top-left bright and bottom-right deep (or the reverse).
-    Rectangle {
-        anchors.fill: parent
-        radius: root.cornerRadius
-        visible: AppearanceTokens.surface.usesBackdrop
-        gradient: Gradient {
-            orientation: Gradient.Horizontal
-            GradientStop {
-                position: 0.0
-                color: root.lightDirection === "topLeft"
-                    ? Qt.rgba(0.88, 0.95, 1.0, 0.085 * root.strength)
-                    : Qt.rgba(0.005, 0.012, 0.030, 0.080 * root.strength)
-            }
-            GradientStop { position: 0.5; color: Qt.rgba(1, 1, 1, 0.0) }
-            GradientStop {
-                position: 1.0
-                color: root.lightDirection === "topLeft"
-                    ? Qt.rgba(0.005, 0.012, 0.030, 0.080 * root.strength)
-                    : Qt.rgba(0.88, 0.95, 1.0, 0.085 * root.strength)
+        // The three overlays below sit inside the panel rather than beside it
+        // so that the corner mask shapes them too. As siblings their circular
+        // radius would disagree with the superelliptical silhouette and leave
+        // slivers of gradient outside the glass at each corner.
+
+        // This horizontal component combines with the panel's existing
+        // top-white/bottom-black finish, producing a *static* diagonal light
+        // field: top-left bright and bottom-right deep (or the reverse).
+        Rectangle {
+            anchors.fill: parent
+            radius: panel.contentRadius
+            visible: AppearanceTokens.surface.usesBackdrop
+            gradient: Gradient {
+                orientation: Gradient.Horizontal
+                GradientStop {
+                    position: 0.0
+                    color: root.lightDirection === "topLeft"
+                        ? Qt.rgba(0.88, 0.95, 1.0, 0.085 * root.strength)
+                        : Qt.rgba(0.005, 0.012, 0.030, 0.080 * root.strength)
+                }
+                GradientStop { position: 0.5; color: Qt.rgba(1, 1, 1, 0.0) }
+                GradientStop {
+                    position: 1.0
+                    color: root.lightDirection === "topLeft"
+                        ? Qt.rgba(0.005, 0.012, 0.030, 0.080 * root.strength)
+                        : Qt.rgba(0.88, 0.95, 1.0, 0.085 * root.strength)
+                }
             }
         }
-    }
 
-    // A quiet colour wash makes the glass pick up its surroundings even
-    // without backdrop sampling. It fades before the centre so text keeps a
-    // neutral, legible resting area.
-    Rectangle {
-        anchors.fill: parent
-        radius: root.cornerRadius
-        visible: AppearanceTokens.surface.usesBackdrop
-        gradient: Gradient {
-            orientation: Gradient.Horizontal
-            GradientStop { position: 0.0; color: Qt.rgba(root.primarySheen.r, root.primarySheen.g, root.primarySheen.b, (0.050 + (1.0 - root.wallpaperLuminance) * 0.065) * root.strength) }
-            GradientStop { position: 0.48; color: Qt.rgba(1, 1, 1, 0.014 * root.strength) }
-            GradientStop { position: 1.0; color: Qt.rgba(root.secondarySheen.r, root.secondarySheen.g, root.secondarySheen.b, (0.040 + (1.0 - root.wallpaperLuminance) * 0.055) * root.strength) }
+        // A quiet colour wash makes the glass pick up its surroundings even
+        // without backdrop sampling. It fades before the centre so text keeps a
+        // neutral, legible resting area.
+        Rectangle {
+            anchors.fill: parent
+            radius: panel.contentRadius
+            visible: AppearanceTokens.surface.usesBackdrop
+            gradient: Gradient {
+                orientation: Gradient.Horizontal
+                GradientStop { position: 0.0; color: Qt.rgba(root.primarySheen.r, root.primarySheen.g, root.primarySheen.b, (0.050 + (1.0 - root.wallpaperLuminance) * 0.065) * root.strength) }
+                GradientStop { position: 0.48; color: Qt.rgba(1, 1, 1, 0.014 * root.strength) }
+                GradientStop { position: 1.0; color: Qt.rgba(root.secondarySheen.r, root.secondarySheen.g, root.secondarySheen.b, (0.040 + (1.0 - root.wallpaperLuminance) * 0.055) * root.strength) }
+            }
         }
-    }
 
-    // The coloured part of the specular edge is deliberately a sub-pixel
-    // accent: the centre retains a familiar white glass glint.
-    Rectangle {
-        x: Math.min(parent.width / 2, root.cornerRadius + 5)
-        y: 1
-        visible: AppearanceTokens.surface.usesBackdrop
-        width: Math.max(0, parent.width - x * 2)
-        height: 1.1
-        gradient: Gradient {
-            orientation: Gradient.Horizontal
-            GradientStop { position: 0.0; color: Qt.rgba(root.primarySheen.r, root.primarySheen.g, root.primarySheen.b, 0.0) }
-            GradientStop { position: 0.18; color: Qt.rgba(root.primarySheen.r, root.primarySheen.g, root.primarySheen.b, 0.34 * root.strength) }
-            GradientStop { position: 0.50; color: Qt.rgba(1, 1, 1, 0.48 * root.strength) }
-            GradientStop { position: 0.82; color: Qt.rgba(root.secondarySheen.r, root.secondarySheen.g, root.secondarySheen.b, 0.30 * root.strength) }
-            GradientStop { position: 1.0; color: Qt.rgba(root.secondarySheen.r, root.secondarySheen.g, root.secondarySheen.b, 0.0) }
+        // The coloured part of the specular edge is deliberately a sub-pixel
+        // accent: the centre retains a familiar white glass glint.
+        Rectangle {
+            x: Math.min(parent.width / 2, root.cornerRadius + 5)
+            y: 1
+            visible: AppearanceTokens.surface.usesBackdrop
+            width: Math.max(0, parent.width - x * 2)
+            height: 1.1
+            gradient: Gradient {
+                orientation: Gradient.Horizontal
+                GradientStop { position: 0.0; color: Qt.rgba(root.primarySheen.r, root.primarySheen.g, root.primarySheen.b, 0.0) }
+                GradientStop { position: 0.18; color: Qt.rgba(root.primarySheen.r, root.primarySheen.g, root.primarySheen.b, 0.34 * root.strength) }
+                GradientStop { position: 0.50; color: Qt.rgba(1, 1, 1, 0.48 * root.strength) }
+                GradientStop { position: 0.82; color: Qt.rgba(root.secondarySheen.r, root.secondarySheen.g, root.secondarySheen.b, 0.30 * root.strength) }
+                GradientStop { position: 1.0; color: Qt.rgba(root.secondarySheen.r, root.secondarySheen.g, root.secondarySheen.b, 0.0) }
+            }
         }
     }
 }

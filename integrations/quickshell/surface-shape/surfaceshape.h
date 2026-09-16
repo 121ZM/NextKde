@@ -1,0 +1,66 @@
+#pragma once
+
+#include <QList>
+#include <QMetaObject>
+#include <QObject>
+#include <QPointer>
+#include <QQuickItem>
+
+class QQuickWindow;
+struct kos_surface_shape_v1;
+struct wl_surface;
+
+class SurfaceShape : public QObject
+{
+    Q_OBJECT
+    Q_PROPERTY(QQuickItem *target READ target WRITE setTarget NOTIFY targetChanged)
+    Q_PROPERTY(qreal radius READ radius WRITE setRadius NOTIFY radiusChanged)
+    Q_PROPERTY(qreal exponent READ exponent WRITE setExponent NOTIFY exponentChanged)
+    Q_PROPERTY(bool enabled READ isEnabled WRITE setEnabled NOTIFY enabledChanged)
+    Q_PROPERTY(bool active READ isActive NOTIFY activeChanged)
+
+public:
+    explicit SurfaceShape(QObject *parent = nullptr);
+    ~SurfaceShape() override;
+
+    QQuickItem *target() const { return m_target; }
+    void setTarget(QQuickItem *target);
+    qreal radius() const { return m_radius; }
+    void setRadius(qreal radius);
+    qreal exponent() const { return m_exponent; }
+    void setExponent(qreal exponent);
+    bool isEnabled() const { return m_enabled; }
+    void setEnabled(bool enabled);
+    bool isActive() const { return m_shape != nullptr; }
+
+Q_SIGNALS:
+    void targetChanged();
+    void radiusChanged();
+    void exponentChanged();
+    void enabledChanged();
+    void activeChanged();
+
+private Q_SLOTS:
+    void scheduleSync();
+    void sync();
+    void handleWindowChanged(QQuickWindow *window);
+    void rewireAncestors();
+
+private:
+    bool eventFilter(QObject *watched, QEvent *event) override;
+    void releaseShape();
+    void disconnectAncestors();
+    wl_surface *nativeSurface() const;
+
+    QPointer<QQuickItem> m_target;
+    QPointer<QQuickWindow> m_window;
+    kos_surface_shape_v1 *m_shape = nullptr;
+    wl_surface *m_surface = nullptr;
+    qreal m_radius = 0.0;
+    qreal m_exponent = 2.0;
+    bool m_enabled = true;
+    bool m_syncPending = false;
+    // The published geometry is a scene rectangle, so it also moves when an
+    // ancestor does -- a change the target's own x/y signals cannot see.
+    QList<QMetaObject::Connection> m_ancestorConnections;
+};

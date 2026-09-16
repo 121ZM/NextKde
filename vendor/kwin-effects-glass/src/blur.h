@@ -23,6 +23,7 @@
 
 namespace KWin
 {
+class SurfaceShapeManager;
 
 #if !defined(GLASS_X11) && !defined(GLASS_KWIN_67)
 class BlurManagerInterface;
@@ -155,6 +156,7 @@ private:
     BlurRegion decorationBlurRegion(const EffectWindow *w) const;
     bool decorationSupportsBlurBehind(const EffectWindow *w) const;
     bool shouldBlur(const EffectWindow *w, int mask, const WindowPaintData &data) const;
+    bool shapeTraceEnabled() const;
     void updateBlurRegion(EffectWindow *w);
     void repaintDynamicCorners();
     void blur(const RenderTarget &renderTarget, const RenderViewport &viewport, EffectWindow *w, int mask, const BlurRegion &deviceRegion, WindowPaintData &data);
@@ -174,10 +176,11 @@ private:
         int halfpixelLocation;
         int boxLocation;
         int cornerRadiusLocation;
+        int cornerExponentLocation;
+        int glassEnabledLocation;
         int opacityLocation;
         int texUnitLocation;
 
-        int blurSizeLocation;
         int edgeSizePixelsLocation;
         int highlightWidthPxLocation;
         int highlightAngleLocation;
@@ -189,11 +192,6 @@ private:
         int materialSoftnessLocation;
         int materialHighlightStrengthLocation;
         int materialReflectionStrengthLocation;
-
-        int tintColorLocation;
-        int tintGrayLocation;
-        int tintStrengthLocation;
-        int autoTintAlphaLocation;
 
         int glowColorLocation;
         int glowStrengthLocation;
@@ -224,6 +222,7 @@ private:
         int noiseTextureSizeLocation;
         int boxLocation;
         int cornerRadiusLocation;
+        int cornerExponentLocation;
 
         std::unique_ptr<GLTexture> noiseTexture;
         qreal noiseTextureScale = 1.0;
@@ -231,6 +230,9 @@ private:
     } m_noisePass;
 
     BlurSettings m_settings;
+#ifndef GLASS_X11
+    std::unique_ptr<SurfaceShapeManager> m_surfaceShapeManager;
+#endif
     bool m_valid = false;
 #ifdef GLASS_KWIN_67
     bool m_blurCapabilityRegistered = false;

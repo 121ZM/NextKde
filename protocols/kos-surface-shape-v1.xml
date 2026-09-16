@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<protocol name="kos_surface_shape_v1">
+  <copyright>
+    SPDX-License-Identifier: MIT
+  </copyright>
+
+  <interface name="kos_surface_shape_manager_v1" version="2">
+    <description summary="surface-local compositor shape metadata">
+      Creates independent shape declarations for regions inside a wl_surface.
+      Coordinates and radius use surface-local logical units.
+    </description>
+    <request name="get_shape">
+      <arg name="id" type="new_id" interface="kos_surface_shape_v1"/>
+      <arg name="surface" type="object" interface="wl_surface"/>
+    </request>
+    <request name="destroy" type="destructor"/>
+  </interface>
+
+  <interface name="kos_surface_shape_v1" version="2">
+    <request name="set_geometry">
+      <arg name="x" type="int"/>
+      <arg name="y" type="int"/>
+      <arg name="width" type="int"/>
+      <arg name="height" type="int"/>
+    </request>
+    <request name="set_corner">
+      <arg name="radius" type="fixed"/>
+      <arg name="exponent" type="fixed"/>
+    </request>
+    <request name="set_enabled">
+      <arg name="enabled" type="uint"/>
+    </request>
+    <!--
+      Kept as a no-op for clients built against protocol version 2. Surface
+      roles were never consumed by the compositor and are no longer published
+      by KOS clients. Removing the request would shift the destructor opcode
+      and make old clients destroy their shape accidentally.
+    -->
+    <request name="set_role">
+      <arg name="role" type="uint"/>
+    </request>
+    <request name="destroy" type="destructor"/>
+  </interface>
+</protocol>

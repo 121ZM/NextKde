@@ -14,25 +14,7 @@
         <entry name="EdgeLightingTooltip" type="Bool">
             <default>false</default>
         </entry>
-        <entry name="ExcludeDocks" type="Bool">
-            <default>false</default>
-        </entry>
         <entry name="ExcludeDecorations" type="Bool">
-            <default>false</default>
-        </entry>
-        <entry name="ExcludeTooltips" type="Bool">
-            <default>false</default>
-        </entry>
-        <entry name="ExcludeMenus" type="Bool">
-            <default>false</default>
-        </entry>
-        <entry name="ExcludeOSD" type="Bool">
-            <default>false</default>
-        </entry>
-        <entry name="TintColor" type="String">
-            <default>#00000000</default>
-        </entry>
-        <entry name="AutoTintAlpha" type="Bool">
             <default>false</default>
         </entry>
         <entry name="GlowColor" type="String">
@@ -80,17 +62,19 @@
         <entry name="TransparentBlur" type="Bool">
             <default>true</default>
         </entry>
-        <entry name="TopCornerRadius" type="Double">
-            <default>0.0</default>
-        </entry>
-        <entry name="BottomCornerRadius" type="Double">
-            <default>0.0</default>
-        </entry>
         <entry name="MenuCornerRadius" type="Double">
             <default>0.0</default>
         </entry>
         <entry name="DockCornerRadius" type="Double">
             <default>0.0</default>
+        </entry>
+        <entry name="CornerExponent" type="Double">
+            <default>3.0</default>
+            <whatsthis>Global Quickshell glass corner profile. 2.0 is circular; larger values produce continuous superellipse corners.</whatsthis>
+        </entry>
+        <entry name="ShapeTrace" type="Bool">
+            <default>false</default>
+            <whatsthis>Log every kos-surface-shape-v1 draw decision (declared shapes, their native boxes and the blur region they are clipped against) to the journal. Debug aid for the protocol path; also enabled by the KOS_GLASS_TRACE environment variable, which a running compositor cannot pick up.</whatsthis>
         </entry>
         <entry name="UseDeclaredCornerRadius" type="Bool">
             <default>false</default>
@@ -98,13 +82,7 @@
         <entry name="IgnoreContentBlurRegion" type="Bool">
             <default>false</default>
         </entry>
-        <entry name="RoundCornersOfMaximizedWindows" type="Bool">
-            <default>false</default>
-        </entry>
         <entry name="DynamicCorners" type="Bool">
-            <default>false</default>
-        </entry>
-        <entry name="DynamicCornersExcludeWindows" type="Bool">
             <default>false</default>
         </entry>
         <entry name="DynamicCornersExcludeDocks" type="Bool">
