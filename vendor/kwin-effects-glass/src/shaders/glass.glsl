@@ -108,22 +108,17 @@ GlassFragment glassRefraction(vec2 position, vec2 halfBlurSize, vec4 cornerRadiu
     // sample 40% across a surface at full strength, pulling unrelated bright
     // wallpaper features into the rim.  Keep the lens visibly fluid but cap
     // it to a bounded pixel range; the user setting supplies the requested
-    // lens radius. The edge remains modest while the body lens below carries
-    // the visible liquid motion.
+    // lens radius.
     float offsetPixels = min(max(refractionOffsetStrength, 0.0), 12.0);
     vec2 edgeOffset = -normal.xy * halfpixel
         * (offsetPixels * refractionStrength * concaveFactor * lens);
 
-    // One continuous volume lens for every Quickshell glass surface. Its
-    // displacement is zero at the exact centre and contour, strongest in the
-    // body between them, so textured backdrops visibly flow without creating
-    // an inset silhouette.
-    vec2 normalizedPos = position / max(halfBlurSize, vec2(1.0));
-    float bodyRadius = dot(normalizedPos, normalizedPos);
-    float bodyEnvelope = smoothstep(1.0, 0.12, bodyRadius);
-    vec2 bodyOffset = normalizedPos * halfpixel * min(
-        offsetPixels * refractionStrength * 5.0 * bodyEnvelope, 18.0);
-    vec2 finalOffset = edgeOffset + bodyOffset;
+    // Refraction is edge-confined in absolute pixels. A previous whole-surface
+    // body lens was normalized by halfBlurSize, so a wide launcher and a Dock
+    // with the same global configuration acquired visibly different material
+    // behaviour. The shared glass contract is one rim treatment regardless of
+    // a surface's size; only its declared geometry may differ.
+    vec2 finalOffset = edgeOffset;
 
     // Corner-weighted chromatic aberration (Kyant0): a real rectangular lens
     // fringes most at its corners and not at all on the axes, so the colour
@@ -173,6 +168,20 @@ vec3 getHighlightColor(vec3 backgroundColor, float targetBrightness)
     float colorInfluence = lumFactor * satFactor;
     vec3 hueLifted = (backgroundColor / max(luminance, 0.001)) * targetBrightness;
     return mix(vec3(targetBrightness), hueLifted, colorInfluence);
+}
+
+// The liquid rim's light colour. Over a dark backdrop the edge normally reads
+// as white light; over a bright one white light would vanish into the backdrop,
+// so it warms toward a dark gold -- "black gold", the tinted colour of light --
+// keeping the edge visible in both cases from the glass itself, without a
+// separate QString outline drawn by the client.
+vec3 rimLight(vec3 backdrop)
+{
+    const vec3 luma = vec3(0.299, 0.587, 0.114);
+    const vec3 darkGold = vec3(0.72, 0.52, 0.16);
+    float lum = dot(backdrop, luma);
+    float brightT = smoothstep(0.45, 0.80, lum);
+    return mix(vec3(1.0), darkGold, brightT);
 }
 
 // ── Edge-confined liquid reflection ───────────────────────────────────
@@ -249,9 +258,12 @@ vec3 applyLiquidGlints(vec3 rgb, vec2 position, vec2 halfBlurSize,
     float strength = clamp(materialHighlightStrength, 0.0, 1.0);
     float response = smoothstep(0.05, 0.75,
         clamp(refractionStrength, 0.0, 1.0)) * strength;
-    rgb = mix(rgb, vec3(1.0),
+    // The rim's light: white over a dark backdrop, dark gold over a bright one,
+    // so the liquid edge stays visible without a separately drawn outline.
+    vec3 rim = rimLight(rgb);
+    rgb = mix(rgb, rim,
         clamp(primaryGlint * 0.60 * response, 0.0, 0.60));
-    rgb = mix(rgb, vec3(1.0),
+    rgb = mix(rgb, rim,
         clamp(secondaryGlint * 0.50 * response, 0.0, 0.50));
     return rgb;
 }

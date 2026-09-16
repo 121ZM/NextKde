@@ -18,6 +18,11 @@ class SurfaceShape : public QObject
     Q_PROPERTY(qreal exponent READ exponent WRITE setExponent NOTIFY exponentChanged)
     Q_PROPERTY(bool enabled READ isEnabled WRITE setEnabled NOTIFY enabledChanged)
     Q_PROPERTY(bool active READ isActive NOTIFY activeChanged)
+    // Contrast scrim sent over protocol v3. scrimTint 0 = black, 1 = white.
+    Q_PROPERTY(bool scrimEnabled READ scrimEnabled WRITE setScrimEnabled NOTIFY scrimEnabledChanged)
+    Q_PROPERTY(int scrimTint READ scrimTint WRITE setScrimTint NOTIFY scrimTintChanged)
+    Q_PROPERTY(qreal scrimCap READ scrimCap WRITE setScrimCap NOTIFY scrimCapChanged)
+    Q_PROPERTY(qreal scrimDecay READ scrimDecay WRITE setScrimDecay NOTIFY scrimDecayChanged)
 
 public:
     explicit SurfaceShape(QObject *parent = nullptr);
@@ -32,6 +37,14 @@ public:
     bool isEnabled() const { return m_enabled; }
     void setEnabled(bool enabled);
     bool isActive() const { return m_shape != nullptr; }
+    bool scrimEnabled() const { return m_scrimEnabled; }
+    void setScrimEnabled(bool enabled);
+    int scrimTint() const { return m_scrimTint; }
+    void setScrimTint(int tint);
+    qreal scrimCap() const { return m_scrimCap; }
+    void setScrimCap(qreal cap);
+    qreal scrimDecay() const { return m_scrimDecay; }
+    void setScrimDecay(qreal decay);
 
 Q_SIGNALS:
     void targetChanged();
@@ -39,6 +52,10 @@ Q_SIGNALS:
     void exponentChanged();
     void enabledChanged();
     void activeChanged();
+    void scrimEnabledChanged();
+    void scrimTintChanged();
+    void scrimCapChanged();
+    void scrimDecayChanged();
 
 private Q_SLOTS:
     void scheduleSync();
@@ -59,6 +76,10 @@ private:
     qreal m_radius = 0.0;
     qreal m_exponent = 2.0;
     bool m_enabled = true;
+    bool m_scrimEnabled = false;
+    int m_scrimTint = 0; // 0 black, 1 white
+    qreal m_scrimCap = 0.0;
+    qreal m_scrimDecay = 1.0;
     bool m_syncPending = false;
     // The published geometry is a scene rectangle, so it also moves when an
     // ancestor does -- a change the target's own x/y signals cannot see.

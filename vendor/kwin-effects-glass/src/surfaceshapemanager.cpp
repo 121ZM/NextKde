@@ -29,6 +29,7 @@ static const struct kos_surface_shape_v1_interface s_shapeImplementation{
     SurfaceShapeManager::setEnabled,
     SurfaceShapeManager::setRole,
     SurfaceShapeManager::destroyShape,
+    SurfaceShapeManager::setScrim,
 };
 
 SurfaceShapeManager::SurfaceShapeManager(Display *display, QObject *parent)
@@ -77,7 +78,7 @@ void SurfaceShapeManager::bindManager(wl_client *client, void *data,
                                       uint32_t version, uint32_t id)
 {
     wl_resource *resource = wl_resource_create(client,
-        &kos_surface_shape_manager_v1_interface, std::min(version, 2u), id);
+        &kos_surface_shape_manager_v1_interface, std::min(version, 3u), id);
     wl_resource_set_implementation(resource, &s_managerImplementation, data, nullptr);
 }
 
@@ -99,7 +100,7 @@ void SurfaceShapeManager::getShape(wl_client *client, wl_resource *resource,
     shape->manager = manager;
     shape->surface = surface;
     shape->value.id = manager->m_nextId++;
-    shape->resource = wl_resource_create(client, &kos_surface_shape_v1_interface, 2, id);
+    shape->resource = wl_resource_create(client, &kos_surface_shape_v1_interface, 3, id);
     wl_resource_set_implementation(shape->resource, &s_shapeImplementation, shape,
                                    destroyShapeResource);
     shape->surfaceDestroyed = connect(surface, &QObject::destroyed, manager,
@@ -169,6 +170,21 @@ void SurfaceShapeManager::setRole(wl_client *, wl_resource *, uint32_t)
 {
     // Compatibility for KOS clients built while roles existed. Roles never
     // affected rendering, so intentionally discard the obsolete request.
+}
+
+void SurfaceShapeManager::setScrim(wl_client *, wl_resource *resource,
+                                   uint32_t enabled, uint32_t tint,
+                                   wl_fixed_t cap, wl_fixed_t decay)
+{
+    auto *shape = static_cast<ShapeResource *>(wl_resource_get_user_data(resource));
+    if (!shape->manager) {
+        return;
+    }
+    shape->value.scrimEnabled = enabled != 0;
+    shape->value.scrimTint = (tint == 1) ? 1 : 0; // 0 black, 1 white
+    shape->value.scrimCap = std::clamp(wl_fixed_to_double(cap), 0.0, 1.0);
+    shape->value.scrimDecay = std::clamp(wl_fixed_to_double(decay), 0.0, 1.0);
+    shape->manager->changed(shape);
 }
 
 void SurfaceShapeManager::destroyShape(wl_client *, wl_resource *resource)

@@ -189,6 +189,11 @@ BlurEffect::BlurEffect()
         m_roundedOnscreenPass.glowColorLocation = m_roundedOnscreenPass.shader->uniformLocation("glowColor");
         m_roundedOnscreenPass.glowStrengthLocation = m_roundedOnscreenPass.shader->uniformLocation("glowStrength");
         m_roundedOnscreenPass.edgeLightingLocation = m_roundedOnscreenPass.shader->uniformLocation("edgeLighting");
+        m_roundedOnscreenPass.scrimModeLocation = m_roundedOnscreenPass.shader->uniformLocation("scrimMode");
+        m_roundedOnscreenPass.scrimCapLocation = m_roundedOnscreenPass.shader->uniformLocation("scrimCap");
+        m_roundedOnscreenPass.scrimDecayLocation = m_roundedOnscreenPass.shader->uniformLocation("scrimDecay");
+        m_roundedOnscreenPass.scrimLumaTexLocation = m_roundedOnscreenPass.shader->uniformLocation("scrimLumaTex");
+        m_roundedOnscreenPass.scrimLumaValidLocation = m_roundedOnscreenPass.shader->uniformLocation("scrimLumaValid");
     }
 
     m_downsamplePass.shader = ShaderManager::instance()->generateShaderFromFile(ShaderTrait::MapTexture,
@@ -1410,6 +1415,19 @@ void BlurEffect::blur(const RenderTarget &renderTarget, const RenderViewport &vi
     if (!declaredSurfaceShapes.isEmpty() && frameShape.isEmpty()) {
         QVector<SurfaceShapeDraw> draws;
         decltype(effectiveContentShape) shapeGeometry;
+        // The blur protocol reaches us in compositor coordinates, whereas
+        // SurfaceShape geometry is surface-local. Align the complete declared
+        // shape set with the already transformed blur region before producing
+        // texture-local vertices. Using transformShape() here is insufficient
+        // for layer-shell surfaces whose blur region has already been placed
+        // by KWin; it leaves nested cards offset inside the cropped texture.
+        QRect declaredShapeBounds;
+        for (const SurfaceShape &shape : declaredSurfaceShapes) {
+            declaredShapeBounds = declaredShapeBounds.united(
+                shape.geometry.toAlignedRect());
+        }
+        const QPoint declaredShapeTranslation = effectShape.boundingRect().topLeft()
+            - declaredShapeBounds.topLeft();
         for (const SurfaceShape &shape : declaredSurfaceShapes) {
             const QRect logicalRect = shape.geometry.toAlignedRect();
             if (logicalRect.isEmpty()) {
@@ -1421,7 +1439,8 @@ void BlurEffect::blur(const RenderTarget &renderTarget, const RenderViewport &vi
 #else
             shapeRegion += Rect(logicalRect);
 #endif
-            const BlurRegion transformedShape = transformShape(shapeRegion);
+            shapeRegion.translate(declaredShapeTranslation);
+            const BlurRegion transformedShape = shapeRegion;
             if (!transformedShape.intersects(effectShape)) {
                 continue;
             }
@@ -1722,6 +1741,64 @@ void BlurEffect::blur(const RenderTarget &renderTarget, const RenderViewport &vi
 
     vbo->bindArrays();
 
+    // Whole-surface scrim tone. A scrim that read the per-pixel backdrop
+    // luminance turned a variegated wallpaper into uneven light/dark blocks
+    // inside one panel. Instead, reduce the captured backdrop to a 1x1 average
+    // (pure GPU, no readback) and let every fragment share that single value.
+    const bool windowScrim = std::any_of(
+        declaredSurfaceShapes.begin(), declaredSurfaceShapes.end(),
+        [](const SurfaceShape &shape) { return shape.scrimEnabled; });
+    GLTexture *scrimAvg = nullptr;
+    if (windowScrim && renderInfo.framebuffers[0]
+            && !backgroundRect.isEmpty()) {
+        const int longest = std::max(backgroundRect.width(), backgroundRect.height());
+        int levels = 0;
+        for (int side = longest; side > 1; side >>= 1)
+            ++levels;
+        if (levels <= 0) {
+            scrimAvg = renderInfo.framebuffers[0]->colorAttachment();
+        } else {
+            if (renderInfo.scrimAvgLevels != levels) {
+                renderInfo.scrimAvgFramebuffers.clear();
+                renderInfo.scrimAvgTextures.clear();
+                renderInfo.scrimAvgLevels = levels;
+                for (int i = 0; i < levels; ++i) {
+                    const QSize size = (backgroundRect.size() / (1 << (i + 1))).expandedTo(QSize(1, 1));
+                    auto texture = GLTexture::allocate(textureFormat, size);
+                    texture->setFilter(GL_LINEAR);
+                    texture->setWrapMode(GL_CLAMP_TO_EDGE);
+                    auto framebuffer = std::make_unique<GLFramebuffer>(texture.get());
+                    EglContext::currentContext()->pushFramebuffer(framebuffer.get());
+                    glClear(GL_COLOR_BUFFER_BIT);
+                    EglContext::currentContext()->popFramebuffer();
+                    renderInfo.scrimAvgTextures.push_back(std::move(texture));
+                    renderInfo.scrimAvgFramebuffers.push_back(std::move(framebuffer));
+                }
+            }
+
+            // Halve each level with the same box-average pass the blur uses,
+            // reaching 1x1 (a single texel = the whole-surface mean colour).
+            ShaderManager::instance()->pushShader(m_downsamplePass.shader.get());
+            QMatrix4x4 projectionMatrix;
+            projectionMatrix.ortho(QRectF(0.0, 0.0, backgroundRect.width(), backgroundRect.height()));
+            m_downsamplePass.shader->setUniform(m_downsamplePass.mvpMatrixLocation, projectionMatrix);
+            m_downsamplePass.shader->setUniform(m_downsamplePass.offsetLocation, 1.0f);
+            GLTexture *read = renderInfo.framebuffers[0]->colorAttachment();
+            for (int i = 0; i < levels && read; ++i) {
+                const QVector2D halfpixel(0.5f / read->width(), 0.5f / read->height());
+                m_downsamplePass.shader->setUniform(m_downsamplePass.halfpixelLocation, halfpixel);
+                glActiveTexture(GL_TEXTURE0);
+                read->bind();
+                EglContext::currentContext()->pushFramebuffer(renderInfo.scrimAvgFramebuffers[i].get());
+                vbo->draw(GL_TRIANGLES, 0, 6);
+                EglContext::currentContext()->popFramebuffer();
+                read = renderInfo.scrimAvgFramebuffers[i]->colorAttachment();
+            }
+            ShaderManager::instance()->popShader();
+            scrimAvg = read;
+        }
+    }
+
     auto runBlurPass = [&](const BlurPipelineSettings &settings) -> GLTexture * {
         ShaderManager::instance()->pushShader(m_downsamplePass.shader.get());
 
@@ -1871,6 +1948,23 @@ void BlurEffect::blur(const RenderTarget &renderTarget, const RenderViewport &vi
         m_roundedOnscreenPass.shader->setUniform(m_roundedOnscreenPass.edgeLightingLocation, m_settings.general.edgeLighting);
     }
 
+    // Contrast scrim defaults to off. A surface that declares a KosRoundedBlurRegion
+    // carries per-shape scrim state (see protocolShapeUniforms below); anything that
+    // reaches this pass on the region path must not inherit a stale tint.
+    m_roundedOnscreenPass.shader->setUniform(m_roundedOnscreenPass.scrimModeLocation, 0);
+    m_roundedOnscreenPass.shader->setUniform(m_roundedOnscreenPass.scrimCapLocation, 0.0f);
+    m_roundedOnscreenPass.shader->setUniform(m_roundedOnscreenPass.scrimDecayLocation, 1.0f);
+    // One whole-surface scrim value from the 1x1 average above, bound at unit 1
+    // so the fragment shader samples one shared tone (no per-pixel banding).
+    m_roundedOnscreenPass.shader->setUniform(m_roundedOnscreenPass.scrimLumaTexLocation, 1);
+    m_roundedOnscreenPass.shader->setUniform(m_roundedOnscreenPass.scrimLumaValidLocation,
+        scrimAvg ? 1 : 0);
+    if (scrimAvg) {
+        glActiveTexture(GL_TEXTURE0 + 1);
+        scrimAvg->bind();
+        glActiveTexture(GL_TEXTURE0);
+    }
+
 
     if (shapeTraceEnabled()) {
         // Everything needed to tell "the shape never arrived" apart from "the
@@ -1932,6 +2026,21 @@ void BlurEffect::blur(const RenderTarget &renderTarget, const RenderViewport &vi
         m_roundedOnscreenPass.shader->setUniform(
             m_roundedOnscreenPass.cornerExponentLocation,
             static_cast<float>(draw.shape.exponent));
+        // Per-shape contrast scrim. scrimTint 0 = black, 1 = white; the shader
+        // maps 0 -> off, 1 -> black, 2 -> white so an off shape can never leak.
+        if (draw.shape.scrimEnabled) {
+            m_roundedOnscreenPass.shader->setUniform(
+                m_roundedOnscreenPass.scrimModeLocation, draw.shape.scrimTint ? 2 : 1);
+            m_roundedOnscreenPass.shader->setUniform(
+                m_roundedOnscreenPass.scrimCapLocation,
+                static_cast<float>(draw.shape.scrimCap));
+            m_roundedOnscreenPass.shader->setUniform(
+                m_roundedOnscreenPass.scrimDecayLocation,
+                static_cast<float>(draw.shape.scrimDecay));
+        } else {
+            m_roundedOnscreenPass.shader->setUniform(
+                m_roundedOnscreenPass.scrimModeLocation, 0);
+        }
     };
 
     auto drawNoiseRegion = [&](int noiseStrength, int vertexOffset,

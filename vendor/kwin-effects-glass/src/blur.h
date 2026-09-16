@@ -45,6 +45,12 @@ struct BlurRenderData
     /// contains not blurred background behind the window, it's cached.
     std::vector<std::unique_ptr<GLTexture>> textures;
     std::vector<std::unique_ptr<GLFramebuffer>> framebuffers;
+    // Scratch chain for the whole-surface scrim average: the backdrop is
+    // reduced to 1x1 here so every fragment shares one uniform tone instead of
+    // banding on a variegated backdrop.
+    std::vector<std::unique_ptr<GLTexture>> scrimAvgTextures;
+    std::vector<std::unique_ptr<GLFramebuffer>> scrimAvgFramebuffers;
+    int scrimAvgLevels = 0;
 };
 
 struct BlurEffectData
@@ -196,6 +202,11 @@ private:
         int glowColorLocation;
         int glowStrengthLocation;
         int edgeLightingLocation;
+        int scrimModeLocation;
+        int scrimCapLocation;
+        int scrimDecayLocation;
+        int scrimLumaTexLocation;
+        int scrimLumaValidLocation;
     } m_roundedOnscreenPass;
 
     struct

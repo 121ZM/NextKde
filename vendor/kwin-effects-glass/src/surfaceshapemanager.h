@@ -21,6 +21,12 @@ struct SurfaceShape
     qreal radius = 0.0;
     qreal exponent = 2.0;
     bool enabled = true;
+    // Contrast scrim. scrimMode is 0 (off), 1 (black) or 2 (white); cap and
+    // decay live only when enabled. Transported by set_scrim (protocol v3).
+    bool scrimEnabled = false;
+    int scrimTint = 0; // 0 = black, 1 = white
+    qreal scrimCap = 0.0;
+    qreal scrimDecay = 1.0;
 };
 
 class SurfaceShapeManager : public QObject
@@ -51,6 +57,9 @@ public: // Wayland C dispatch table callbacks.
                           wl_fixed_t radius, wl_fixed_t exponent);
     static void setEnabled(wl_client *client, wl_resource *resource, uint32_t enabled);
     static void setRole(wl_client *client, wl_resource *resource, uint32_t role);
+    static void setScrim(wl_client *client, wl_resource *resource,
+                         uint32_t enabled, uint32_t tint,
+                         wl_fixed_t cap, wl_fixed_t decay);
     static void destroyShape(wl_client *client, wl_resource *resource);
 
 private:

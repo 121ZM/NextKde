@@ -4,7 +4,7 @@
     SPDX-License-Identifier: MIT
   </copyright>
 
-  <interface name="kos_surface_shape_manager_v1" version="2">
+  <interface name="kos_surface_shape_manager_v1" version="3">
     <description summary="surface-local compositor shape metadata">
       Creates independent shape declarations for regions inside a wl_surface.
       Coordinates and radius use surface-local logical units.
@@ -16,7 +16,13 @@
     <request name="destroy" type="destructor"/>
   </interface>
 
-  <interface name="kos_surface_shape_v1" version="2">
+  <!--
+    Version 3 adds set_scrim. The composite must stay binary-compatible with
+    v2 clients: the departing v2 server still has to accept set_role (no-op),
+    and the new request must be appended before destroy so the destructor
+    opcode is unchanged.
+  -->
+  <interface name="kos_surface_shape_v1" version="3">
     <request name="set_geometry">
       <arg name="x" type="int"/>
       <arg name="y" type="int"/>
@@ -40,5 +46,20 @@
       <arg name="role" type="uint"/>
     </request>
     <request name="destroy" type="destructor"/>
+    <!--
+      A contrast scrim over this shape, sized to the background it sits on.
+      tint selects a black or white fill; cap is the absolute opacity ceiling;
+      decay scales the auto-derived opacity (a surface may want a calmer shade,
+      e.g. a dock at 0.6 of the default). The compositor maps backdrop luminance
+      to opacity and multiplies by decay, then clamps to cap.
+      Deliberately after the destructor: a v2 client's destroy opcode must not
+      shift, so new versioned state is appended at the end.
+    -->
+    <request name="set_scrim" since="3">
+      <arg name="enabled" type="uint"/>
+      <arg name="tint" type="uint"/>
+      <arg name="cap" type="fixed"/>
+      <arg name="decay" type="fixed"/>
+    </request>
   </interface>
 </protocol>

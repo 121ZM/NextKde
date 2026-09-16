@@ -70,7 +70,7 @@ private:
         if (qstrcmp(interface, kos_surface_shape_manager_v1_interface.name) == 0) {
             self->m_manager = static_cast<kos_surface_shape_manager_v1 *>(
                 wl_registry_bind(registry, name,
-                    &kos_surface_shape_manager_v1_interface, std::min(version, 1u)));
+                    &kos_surface_shape_manager_v1_interface, std::min(version, 3u)));
             self->m_globalName = name;
             Q_EMIT self->available();
         }
@@ -199,6 +199,33 @@ void SurfaceShape::setEnabled(bool enabled)
     m_enabled = enabled; Q_EMIT enabledChanged(); scheduleSync();
 }
 
+void SurfaceShape::setScrimEnabled(bool enabled)
+{
+    if (m_scrimEnabled == enabled) return;
+    m_scrimEnabled = enabled; Q_EMIT scrimEnabledChanged(); scheduleSync();
+}
+
+void SurfaceShape::setScrimTint(int tint)
+{
+    tint = (tint == 1) ? 1 : 0;
+    if (m_scrimTint == tint) return;
+    m_scrimTint = tint; Q_EMIT scrimTintChanged(); scheduleSync();
+}
+
+void SurfaceShape::setScrimCap(qreal cap)
+{
+    cap = std::clamp(cap, 0.0, 1.0);
+    if (qFuzzyCompare(m_scrimCap, cap)) return;
+    m_scrimCap = cap; Q_EMIT scrimCapChanged(); scheduleSync();
+}
+
+void SurfaceShape::setScrimDecay(qreal decay)
+{
+    decay = std::clamp(decay, 0.0, 1.0);
+    if (qFuzzyCompare(m_scrimDecay, decay)) return;
+    m_scrimDecay = decay; Q_EMIT scrimDecayChanged(); scheduleSync();
+}
+
 void SurfaceShape::handleWindowChanged(QQuickWindow *window)
 {
     if (m_window == window) { scheduleSync(); return; }
@@ -252,6 +279,11 @@ void SurfaceShape::sync()
         wl_fixed_from_double(m_radius), wl_fixed_from_double(m_exponent));
     kos_surface_shape_v1_set_enabled(m_shape,
         (m_enabled && effectivelyShown(m_target)) ? 1 : 0);
+    kos_surface_shape_v1_set_scrim(m_shape,
+        (m_scrimEnabled && effectivelyShown(m_target)) ? 1 : 0,
+        m_scrimTint,
+        wl_fixed_from_double(m_scrimCap),
+        wl_fixed_from_double(m_scrimDecay));
 }
 
 void SurfaceShape::releaseShape()
