@@ -89,7 +89,8 @@ void main(void)
             float amount = smoothstep(0.40, 0.85, damage);
             float scrimAlpha = fixedScrim ? scrimCap
                 : clamp(max(amount * scrimDecay, floorAlpha), 0.0, scrimCap);
-            vec3 tint = whiteScrim ? vec3(1.0) : vec3(0.0);
+            vec3 tint = scrimMode == 5 ? vec3(0.34, 0.335, 0.35)
+                : (whiteScrim ? vec3(1.0) : vec3(0.0));
 
             if (!fixedScrim && whiteScrim) {
                 // All shipped white curves have reached their minimum by about

@@ -50,8 +50,9 @@
       A contrast scrim over this shape, sized to the background it sits on.
       tint selects black or white. cap is the opacity ceiling for adaptive mode
       and the exact opacity for fixed mode. decay values 0..1 scale adaptive
-      opacity; a value above 1 selects fixed mode. This encoding lets an older
-      compositor safely clamp an unknown fixed mode back to adaptive decay 1.
+      opacity; values above 1 select fixed mode, and values above 2 select the
+      fixed neutral graphite material. This encoding lets an older compositor
+      safely clamp an unknown fixed mode back to adaptive decay 1.
       Deliberately after the destructor: a v2 client's destroy opcode must not
       shift, so new versioned state is appended at the end.
     -->
