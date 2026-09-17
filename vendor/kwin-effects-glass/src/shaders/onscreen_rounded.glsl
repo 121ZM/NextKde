@@ -83,13 +83,15 @@ void main(void)
             // the tint; scaling with cap means see-through levels still stay
             // nearly transparent while readable ones hold a faint presence.
             bool fixedScrim = scrimMode >= 3;
-            bool whiteScrim = scrimMode == 2 || scrimMode == 4;
+            bool whiteScrim = scrimMode == 2 || scrimMode == 4
+                || scrimMode == 6;
             float floorAlpha = 0.06 * scrimCap;
             float damage = whiteScrim ? (1.0 - lum) : lum;
             float amount = smoothstep(0.40, 0.85, damage);
             float scrimAlpha = fixedScrim ? scrimCap
                 : clamp(max(amount * scrimDecay, floorAlpha), 0.0, scrimCap);
-            vec3 tint = scrimMode == 5 ? vec3(0.34, 0.335, 0.35)
+            vec3 tint = scrimMode == 6 ? vec3(0.92, 0.915, 0.905)
+                : scrimMode == 5 ? vec3(0.34, 0.335, 0.35)
                 : (whiteScrim ? vec3(1.0) : vec3(0.0));
 
             if (!fixedScrim && whiteScrim) {

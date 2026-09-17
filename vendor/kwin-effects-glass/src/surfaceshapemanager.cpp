@@ -187,7 +187,7 @@ void SurfaceShapeManager::setScrim(wl_client *, wl_resource *resource,
     shape->value.scrimEnabled = enabled != 0;
     shape->value.scrimTint = (tint == 1) ? 1 : 0;
     shape->value.scrimCap = std::clamp(wl_fixed_to_double(cap), 0.0, 1.0);
-    shape->value.scrimDecay = std::clamp(wl_fixed_to_double(decay), 0.0, 3.0);
+    shape->value.scrimDecay = std::clamp(wl_fixed_to_double(decay), 0.0, 4.0);
     shape->manager->changed(shape);
 }
 

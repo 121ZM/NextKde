@@ -227,7 +227,7 @@ void SurfaceShape::setScrimDecay(qreal decay)
 {
     // 0..1 is adaptive decay. Values above 1 encode fixed mode while keeping
     // the v3 wire request backward-compatible with old compositors.
-    decay = std::clamp(decay, 0.0, 3.0);
+    decay = std::clamp(decay, 0.0, 4.0);
     if (qFuzzyCompare(m_scrimDecay, decay)) return;
     m_scrimDecay = decay; Q_EMIT scrimDecayChanged(); scheduleSync();
 }

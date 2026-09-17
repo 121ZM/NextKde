@@ -2071,7 +2071,8 @@ void BlurEffect::blur(const RenderTarget &renderTarget, const RenderViewport &vi
         if (draw.shape.scrimEnabled) {
             m_roundedOnscreenPass.shader->setUniform(
                 m_roundedOnscreenPass.scrimModeLocation,
-                draw.shape.scrimDecay > 2.0 ? 5
+                draw.shape.scrimDecay > 3.0 ? 6
+                    : draw.shape.scrimDecay > 2.0 ? 5
                     : (draw.shape.scrimDecay > 1.0 ? 3 : 1)
                         + (draw.shape.scrimTint == 1 ? 1 : 0));
             m_roundedOnscreenPass.shader->setUniform(
