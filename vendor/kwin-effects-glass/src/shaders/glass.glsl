@@ -1,17 +1,9 @@
-uniform vec3 glowColor;
-uniform float glowStrength;
-uniform int edgeLighting;
-
 uniform float edgeSizePixels;
-uniform float highlightWidthPx;
-uniform float highlightAngle;
 uniform float refractionStrength;
 uniform float refractionNormalPow;
 uniform float refractionRGBFringing;
 uniform float refractionOffsetStrength;
-uniform float refractionBevelIntensity;
 uniform float materialSoftness;
-uniform float materialHighlightStrength;
 uniform float materialReflectionStrength;
 uniform float cornerExponent;
 
@@ -36,26 +28,14 @@ float roundedRectangleDist(vec2 p, vec2 b, vec4 cornerRadius)
     return min(max(q.x, q.y), 0.0) + squircleNorm(max(q, 0.0)) - r;
 }
 
+// Only the sampled colour leaves this stage. The distance, edge and normal
+// fields it used to carry had no reader left once the outline paths were
+// removed, and passing them around made them look like live outputs.
 struct GlassFragment {
     vec4 color;
-    float dist;
-    float edgeFactor;
-    float concaveFactor;
-    vec3 normal;
-    float ior;
 };
 
 #include "snells-glass.glsl"
-
-// ── Kyant0 lens profile (circleMap) ───────────────────────────────────
-// Refraction in iOS glass is confined to a band near the edge and falls off
-// along a circular-arc profile: 1.0 at the rim, 0.0 at the inner edge of the
-// band. This is what makes the edge bend while the interior stays flat.
-// Replaces the pow() approximation in concaveFactor for the refraction zone.
-float circleMap(float x)
-{
-    return 1.0 - sqrt(1.0 - clamp(x, 0.0, 1.0) * x);
-}
 
 // Analytic gradient of the rounded-box SDF (Kyant0 gradSdRoundedRect). One
 // exact normal sample replaces the finite-difference pair, and the gradient
@@ -79,79 +59,6 @@ vec2 gradSdRoundedBox(vec2 p, vec2 b, float r)
     if (q.y > 0.0)
         return vec2(0.0, sgn.y);
     return (q.x > q.y) ? vec2(sgn.x, 0.0) : vec2(0.0, sgn.y);
-}
-
-GlassFragment glassRefraction(vec2 position, vec2 halfBlurSize, vec4 cornerRadius, float dist, float edgeFactor, float concaveFactor)
-{
-    // Analytic SDF normal (Kyant0): one exact sample instead of the
-    // finite-difference pair. The gradient radius is widened to keep the
-    // normal field smooth through the corners.
-    float minHalfSize = min(halfBlurSize.x, halfBlurSize.y);
-    float minR = min(min(cornerRadius.x, cornerRadius.y), min(cornerRadius.z, cornerRadius.w));
-    float gradRadius = min(minR * 1.5, minHalfSize);
-    vec2 gradient = gradSdRoundedBox(position, halfBlurSize, gradRadius);
-
-    vec2 normal = length(gradient) > 1e-5 ? -normalize(gradient) : vec2(0.0, 1.0);
-
-    // The lens band: refraction lives only inside a band of width
-    // max(edgeSizePixels, 2px) * 1.5 from the edge. interiorDist grows inward
-    // from 0 at the rim; bandT goes 1.0 (rim) -> 0.0 (band inner edge) and
-    // circleMap turns that into the circular-arc falloff. Beyond the band the
-    // surface is perfectly flat, matching iOS "edge bends, center flat".
-    float interiorDist = -dist;
-    float bandWidth = max(edgeSizePixels, 2.0) * 1.5;
-    float bandT = 1.0 - clamp(interiorDist / bandWidth, 0.0, 1.0);
-    float lens = circleMap(bandT);
-
-    // Displacement is measured in source-texture pixels, never as a fraction
-    // of the whole offscreen texture.  The previous 0.4 UV-space offset could
-    // sample 40% across a surface at full strength, pulling unrelated bright
-    // wallpaper features into the rim.  Keep the lens visibly fluid but cap
-    // it to a bounded pixel range; the user setting supplies the requested
-    // lens radius.
-    float offsetPixels = min(max(refractionOffsetStrength, 0.0), 12.0);
-    vec2 edgeOffset = -normal.xy * halfpixel
-        * (offsetPixels * refractionStrength * concaveFactor * lens);
-
-    // Refraction is edge-confined in absolute pixels. A previous whole-surface
-    // body lens was normalized by halfBlurSize, so a wide launcher and a Dock
-    // with the same global configuration acquired visibly different material
-    // behaviour. The shared glass contract is one rim treatment regardless of
-    // a surface's size; only its declared geometry may differ.
-    vec2 finalOffset = edgeOffset;
-
-    // Corner-weighted chromatic aberration (Kyant0): a real rectangular lens
-    // fringes most at its corners and not at all on the axes, so the colour
-    // split scales with |x*y| across the surface. The corner emphasis is the
-    // structural change (parameter-unreachable); the overall amount stays
-    // parameter-driven via refractionRGBFringing.
-    vec2 centeredNorm = position / halfBlurSize;
-    float cornerWeight = abs(centeredNorm.x * centeredNorm.y);
-    float fringingFactor = refractionRGBFringing * 0.3
-        * (0.3 + 0.7 * cornerWeight);
-
-    vec2 refractOffsetG = finalOffset;
-    vec2 refractOffsetR = finalOffset;
-    vec2 refractOffsetB = finalOffset;
-
-    if (fringingFactor > 0.0) {
-        // Red bends most
-        refractOffsetR = finalOffset * (1.0 + fringingFactor);
-        // Blue bends least
-        refractOffsetB = finalOffset * (1.0 - fringingFactor);
-    }
-
-    vec2 coordR = clamp(uv - refractOffsetR, 0.0, 1.0);
-    vec2 coordG = clamp(uv - refractOffsetG, 0.0, 1.0);
-    vec2 coordB = clamp(uv - refractOffsetB, 0.0, 1.0);
-
-    vec4 color = vec4(
-        texture(texUnit, coordR).r,
-        texture(texUnit, coordG).g,
-        texture(texUnit, coordB).b,
-        texture(texUnit, coordG).a
-    );
-    return GlassFragment(color, dist, edgeFactor, concaveFactor, vec3(0.0, 0.0, 1.0), 1.0);
 }
 
 // Rim highlight colour from the iOS render shader: on a dark backdrop the
@@ -178,7 +85,9 @@ vec3 getHighlightColor(vec3 backgroundColor, float targetBrightness)
 vec3 rimLight(vec3 backdrop)
 {
     const vec3 luma = vec3(0.299, 0.587, 0.114);
-    const vec3 darkGold = vec3(0.72, 0.52, 0.16);
+    // Nearly black with only a restrained warm-gold bias. This is the dark
+    // reflected edge of liquid glass, not a bright metallic gold stroke.
+    const vec3 darkGold = vec3(0.14, 0.11, 0.055);
     float lum = dot(backdrop, luma);
     float brightT = smoothstep(0.45, 0.80, lum);
     return mix(vec3(1.0), darkGold, brightT);
@@ -201,7 +110,13 @@ vec3 applyLiquidGlints(vec3 rgb, vec2 position, vec2 halfBlurSize,
     vec2 outward = length(gradient) > 1e-5 ? normalize(gradient)
         : vec2(0.0, 1.0);
 
-    float widthScale = clamp(highlightWidthPx / 3.0, 0.80, 1.20);
+    // Liquid keeps its tight rim. Soft glass uses the same rim, but lets its
+    // high light diffuse *inward* over the authored highlight width instead
+    // of adding a separate directional reflection layer.
+    float softness = clamp(materialSoftness, 0.0, 1.0);
+    float softSpread = smoothstep(0.05, 0.65, softness);
+    const float liquidHighlightWidthPx = 3.0;
+    float widthScale = clamp(liquidHighlightWidthPx / 3.0, 0.80, 1.20);
     float straightSigma = max(edgeAntialiasWidth * 0.52,
         0.62 * widthScale);
     // A sub-pixel Gaussian is stable on an axis-aligned edge but aliases when
@@ -216,16 +131,27 @@ vec3 applyLiquidGlints(vec3 rgb, vec2 position, vec2 halfBlurSize,
         arcCoverage);
     float edgeDistance = max(-dist, 0.0);
     float contourLine = exp(-0.5 * pow((edgeDistance - 1.0) / sigma, 2.0));
+    // Soft glass is a longer inward scatter, not a wider solid stroke. An
+    // exponential falloff loses energy continuously as it travels inward;
+    // the smooth tail reaches zero at 26 px without leaving a hard inner ring.
+    // The longer decay keeps the scatter visible over near-black backdrops.
+    const float softGlowReachPx = 26.0;
+    const float softGlowDecayPx = 9.5;
+    // Start at zero on the contour so soft glass has no extra hard highlight;
+    // energy blooms just inside the edge, then scatters and fades inward.
+    float softGlow = (1.0 - exp(-edgeDistance / 1.8))
+        * exp(-edgeDistance / softGlowDecayPx)
+        * (1.0 - smoothstep(softGlowReachPx * 0.68,
+            softGlowReachPx, edgeDistance));
 
     // Keep the selected diagonal from the previous design. At 45 degrees the
     // primary corner is top-left and the secondary corner is bottom-right.
     // Each envelope is blended by the continuous SDF normal through the corner
     // and decays over the full side length, so there is no tangent discontinuity.
-    float angle = radians(highlightAngle);
-    float angleX = cos(angle);
-    float angleY = sin(angle);
-    vec2 primarySign = vec2(angleX >= -0.0001 ? -1.0 : 1.0,
-        angleY >= -0.0001 ? 1.0 : -1.0);
+    // The authored light direction is fixed at 45 degrees (top-left).
+    // The material light is authored at 45 degrees (top-left). It is not a
+    // user preference, so keep it as part of the shader design.
+    const vec2 primarySign = vec2(-1.0, 1.0);
 
     float xProgress = clamp((position.x + halfBlurSize.x)
         / max(halfBlurSize.x * 2.0, 1.0), 0.0, 1.0);
@@ -252,19 +178,34 @@ vec3 applyLiquidGlints(vec3 rgb, vec2 position, vec2 halfBlurSize,
     float secondaryEnvelope = min(1.0,
         secondaryHorizontalFacing * secondaryHorizontalFade
         + secondaryVerticalFacing * secondaryVerticalFade);
-    float primaryGlint = contourLine * primaryEnvelope;
-    float secondaryGlint = contourLine * secondaryEnvelope;
+    // Liquid's narrow glints fade out as the soft material takes over. The
+    // soft scatter is applied independently below; it must not inherit the
+    // liquid highlight's refraction response.
+    float primaryGlint = contourLine * primaryEnvelope
+        * (1.0 - softSpread);
+    float secondaryGlint = contourLine * secondaryEnvelope
+        * (1.0 - softSpread);
 
-    float strength = clamp(materialHighlightStrength, 0.0, 1.0);
-    float response = smoothstep(0.05, 0.75,
-        clamp(refractionStrength, 0.0, 1.0)) * strength;
-    // The rim's light: white over a dark backdrop, dark gold over a bright one,
-    // so the liquid edge stays visible without a separately drawn outline.
+    float refractionResponse = smoothstep(0.05, 0.75,
+        clamp(refractionStrength, 0.0, 1.0));
+    float liquidResponse = refractionResponse;
+    // Liquid uses the authored white/black-gold rim. Soft glass uses only a
+    // neutral lift of the backdrop itself, so its scatter cannot turn gold.
     vec3 rim = rimLight(rgb);
     rgb = mix(rgb, rim,
-        clamp(primaryGlint * 0.60 * response, 0.0, 0.60));
+        clamp(primaryGlint * 0.60 * liquidResponse, 0.0, 0.60));
     rgb = mix(rgb, rim,
-        clamp(secondaryGlint * 0.50 * response, 0.0, 0.50));
+        clamp(secondaryGlint * 0.50 * liquidResponse, 0.0, 0.50));
+
+    // Soft scatter is a separate material contribution: no hard contour and
+    // no dependency on refraction. It begins at zero on the edge, blooms just
+    // inside it, then loses brightness continuously over the 26 px reach.
+    // A stronger neutral lift is intentional here: unlike the liquid rim it
+    // must remain readable when both the glass and the backdrop are dark.
+    vec3 softLight = mix(rgb, vec3(1.0), 0.52);
+    const float softScatterStrength = 0.48;
+    rgb = mix(rgb, softLight,
+        clamp(softGlow * softSpread * softScatterStrength, 0.0, 0.48));
     return rgb;
 }
 
@@ -276,6 +217,10 @@ vec3 applySoftMaterial(vec3 rgb, vec2 position, vec2 halfBlurSize,
 {
     float softness = clamp(materialSoftness, 0.0, 1.0);
     float reflection = clamp(materialReflectionStrength, 0.0, 1.0);
+    // Liquid glass ships with both at zero, so every term below would be
+    // computed and then mixed away at weight zero. Skip the whole stage.
+    if (softness <= 0.0 && reflection <= 0.0)
+        return rgb;
 
     const vec3 lumaWeights = vec3(0.299, 0.587, 0.114);
     float luma = dot(rgb, lumaWeights);
@@ -289,8 +234,19 @@ vec3 applySoftMaterial(vec3 rgb, vec2 position, vec2 halfBlurSize,
         max(minRadius, 1.0));
     vec2 outward = length(gradient) > 1e-5 ? normalize(gradient)
         : vec2(0.0, 1.0);
+    // One key lobe alone made the broad reflection a top-only highlight: its
+    // weight is smoothstep(-0.15, 0.85, dot(outward, lightDirection)), which
+    // bottoms out at zero for every normal facing away from a light coming from
+    // the upper left. The bottom edge sits exactly at zero and the right edge
+    // under a third, so the rim below never lit. A soft material catches a
+    // grazing sheen on every side it is seen from, so a counter lobe from the
+    // opposite side keeps the far rim at `counterShare` of the key's peak --
+    // all four edges stay lit while the upper left still leads.
     vec2 lightDirection = normalize(vec2(-0.55, 0.84));
-    float directional = smoothstep(-0.15, 0.85, dot(outward, lightDirection));
+    float keyLobe = smoothstep(-0.15, 0.85, dot(outward, lightDirection));
+    float counterLobe = smoothstep(-0.15, 0.85, -dot(outward, lightDirection));
+    const float counterShare = 0.45;
+    float directional = max(keyLobe, counterLobe * counterShare);
     float broadBand = pow(clamp(edgeFactor, 0.0, 1.0), 1.6);
     float reflected = broadBand * directional * reflection;
     vec3 reflectionColor = getHighlightColor(rgb, mix(0.82, 1.0, directional));
@@ -317,9 +273,9 @@ vec4 glass(vec4 sum, vec4 cornerRadius, vec2 position, vec2 halfBlurSize)
     if (refractionStrength > 0.0) {
         vec4 r = clamp(cornerRadius * 2.0, min(64.0, minHalfSize), min(128.0, minHalfSize));
         s = snellsRefraction(position, halfBlurSize, r, minHalfSize, dist,
-            edgeFactor, concaveFactor);
+            concaveFactor);
     } else {
-        s = GlassFragment(sum, dist, edgeFactor, concaveFactor, vec3(0.0, 0.0, 1.0), 1.0);
+        s = GlassFragment(sum);
     }
 
     vec3 rgb = s.color.rgb;

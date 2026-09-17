@@ -156,6 +156,11 @@ BlurEffect::BlurEffect()
     BlurConfig::instance(effects->config());
     ensureResources();
 
+    // Built before anything that can fail: reconfigure() indexes this table, and
+    // so does every later D-Bus reconfigure, so it must exist even when a shader
+    // below fails to load.
+    initBlurStrengthValues();
+
     m_roundedOnscreenPass.shader = ShaderManager::instance()->generateShaderFromFile(ShaderTrait::MapTexture,
                                                                                      QStringLiteral(":/effects/glass/generated/onscreen_rounded.vert"),
                                                                                      QStringLiteral(":/effects/glass/generated/onscreen_rounded.frag"));
@@ -169,6 +174,7 @@ BlurEffect::BlurEffect()
         m_roundedOnscreenPass.saturationLocation = m_roundedOnscreenPass.shader->uniformLocation("saturation");
         m_roundedOnscreenPass.offsetLocation = m_roundedOnscreenPass.shader->uniformLocation("offset");
         m_roundedOnscreenPass.halfpixelLocation = m_roundedOnscreenPass.shader->uniformLocation("halfpixel");
+        m_roundedOnscreenPass.viewportScaleLocation = m_roundedOnscreenPass.shader->uniformLocation("viewportScale");
         m_roundedOnscreenPass.boxLocation = m_roundedOnscreenPass.shader->uniformLocation("box");
         m_roundedOnscreenPass.cornerRadiusLocation = m_roundedOnscreenPass.shader->uniformLocation("cornerRadius");
         m_roundedOnscreenPass.cornerExponentLocation = m_roundedOnscreenPass.shader->uniformLocation("cornerExponent");
@@ -176,19 +182,12 @@ BlurEffect::BlurEffect()
         m_roundedOnscreenPass.opacityLocation = m_roundedOnscreenPass.shader->uniformLocation("opacity");
         m_roundedOnscreenPass.texUnitLocation = m_roundedOnscreenPass.shader->uniformLocation("texUnit");
         m_roundedOnscreenPass.edgeSizePixelsLocation = m_roundedOnscreenPass.shader->uniformLocation("edgeSizePixels");
-        m_roundedOnscreenPass.highlightWidthPxLocation = m_roundedOnscreenPass.shader->uniformLocation("highlightWidthPx");
-        m_roundedOnscreenPass.highlightAngleLocation = m_roundedOnscreenPass.shader->uniformLocation("highlightAngle");
         m_roundedOnscreenPass.refractionStrengthLocation = m_roundedOnscreenPass.shader->uniformLocation("refractionStrength");
         m_roundedOnscreenPass.refractionNormalPowLocation = m_roundedOnscreenPass.shader->uniformLocation("refractionNormalPow");
         m_roundedOnscreenPass.refractionRGBFringingLocation = m_roundedOnscreenPass.shader->uniformLocation("refractionRGBFringing");
         m_roundedOnscreenPass.refractionOffsetStrengthLocation = m_roundedOnscreenPass.shader->uniformLocation("refractionOffsetStrength");
-        m_roundedOnscreenPass.refractionBevelIntensityLocation = m_roundedOnscreenPass.shader->uniformLocation("refractionBevelIntensity");
         m_roundedOnscreenPass.materialSoftnessLocation = m_roundedOnscreenPass.shader->uniformLocation("materialSoftness");
-        m_roundedOnscreenPass.materialHighlightStrengthLocation = m_roundedOnscreenPass.shader->uniformLocation("materialHighlightStrength");
         m_roundedOnscreenPass.materialReflectionStrengthLocation = m_roundedOnscreenPass.shader->uniformLocation("materialReflectionStrength");
-        m_roundedOnscreenPass.glowColorLocation = m_roundedOnscreenPass.shader->uniformLocation("glowColor");
-        m_roundedOnscreenPass.glowStrengthLocation = m_roundedOnscreenPass.shader->uniformLocation("glowStrength");
-        m_roundedOnscreenPass.edgeLightingLocation = m_roundedOnscreenPass.shader->uniformLocation("edgeLighting");
         m_roundedOnscreenPass.scrimModeLocation = m_roundedOnscreenPass.shader->uniformLocation("scrimMode");
         m_roundedOnscreenPass.scrimCapLocation = m_roundedOnscreenPass.shader->uniformLocation("scrimCap");
         m_roundedOnscreenPass.scrimDecayLocation = m_roundedOnscreenPass.shader->uniformLocation("scrimDecay");
@@ -235,9 +234,7 @@ BlurEffect::BlurEffect()
         m_noisePass.cornerExponentLocation = m_noisePass.shader->uniformLocation("cornerExponent");
     }
 
-    initBlurStrengthValues();
     reconfigure(ReconfigureAll);
-
 #if KWIN_BUILD_X11
     if (effects->xcbConnection()) {
         net_wm_blur_region = effects->announceSupportProperty(s_blurAtomName, this);
@@ -469,6 +466,23 @@ void BlurEffect::repaintDynamicCorners()
 
 BlurEffect::BlurPipelineSettings BlurEffect::pipelineSettingsForStrength(int blurStrength, int noiseStrength) const
 {
+    // The strength table is built once, by the constructor. A shader that failed
+    // to load used to return before that happened, which left the table empty
+    // and turned the next reconfigure() -- any kwinrc write, including the
+    // shell's own sync -- into an out-of-range index. QList asserts on that, so
+    // a cosmetic GLSL error took the whole compositor down instead of merely
+    // leaving the glass unrendered. Fall back to the weakest entry (one
+    // downsampling iteration) and keep running.
+    if (blurStrengthValues.isEmpty() || blurOffsets.isEmpty()
+        || blurStrength < 0 || blurStrength >= blurStrengthValues.size()) {
+        return BlurPipelineSettings{
+            .iterationCount = 1,
+            .offset = 1.0f,
+            .expandSize = 10,
+            .noiseStrength = noiseStrength,
+        };
+    }
+
     const BlurValuesStruct &values = blurStrengthValues[blurStrength];
 
     return BlurPipelineSettings{
@@ -1428,6 +1442,21 @@ void BlurEffect::blur(const RenderTarget &renderTarget, const RenderViewport &vi
         }
         const QPoint declaredShapeTranslation = effectShape.boundingRect().topLeft()
             - declaredShapeBounds.topLeft();
+        // The declared set has to describe the same thing as the region: the
+        // alignment below is one translation for all of it, so a set that is a
+        // strict subset (or superset) of the region shifts every shape by the
+        // difference -- a card panel whose overlay sheet was left out of the
+        // union slid its whole glass by 238px. Report it (the geometry below is
+        // still the best available guess) rather than fail silently.
+        if (declaredShapeBounds.size() != effectShape.boundingRect().size()
+            || declaredShapeTranslation != QPoint(0, 0)) {
+            if (shapeTraceEnabled()) {
+                qCWarning(shapeTraceCategory())
+                    << "declared shape set does not match the blur region;"
+                    << "shapes:" << declaredShapeBounds << "region:" << effectShape.boundingRect()
+                    << "translation:" << declaredShapeTranslation;
+            }
+        }
         for (const SurfaceShape &shape : declaredSurfaceShapes) {
             const QRect logicalRect = shape.geometry.toAlignedRect();
             if (logicalRect.isEmpty()) {
@@ -1758,22 +1787,42 @@ void BlurEffect::blur(const RenderTarget &renderTarget, const RenderViewport &vi
         if (levels <= 0) {
             scrimAvg = renderInfo.framebuffers[0]->colorAttachment();
         } else {
-            if (renderInfo.scrimAvgLevels != levels) {
+            if (renderInfo.scrimAvgLevels != levels
+                || renderInfo.scrimAvgSize != backgroundRect.size()
+                || renderInfo.scrimAvgFramebuffers.size() != static_cast<size_t>(levels)) {
                 renderInfo.scrimAvgFramebuffers.clear();
                 renderInfo.scrimAvgTextures.clear();
-                renderInfo.scrimAvgLevels = levels;
+                // Zeroed until the chain is complete: a partially filled cache
+                // must not look valid to the next frame.
+                renderInfo.scrimAvgLevels = 0;
                 for (int i = 0; i < levels; ++i) {
                     const QSize size = (backgroundRect.size() / (1 << (i + 1))).expandedTo(QSize(1, 1));
                     auto texture = GLTexture::allocate(textureFormat, size);
+                    if (!texture) {
+                        qCWarning(KWIN_BLUR) << "Failed to allocate a scrim average texture";
+                        return;
+                    }
                     texture->setFilter(GL_LINEAR);
                     texture->setWrapMode(GL_CLAMP_TO_EDGE);
                     auto framebuffer = std::make_unique<GLFramebuffer>(texture.get());
+                    if (!framebuffer->valid()) {
+                        qCWarning(KWIN_BLUR) << "Failed to create a scrim average framebuffer";
+                        return;
+                    }
+#ifdef GLASS_X11
+                    GLFramebuffer::pushFramebuffer(framebuffer.get());
+                    glClear(GL_COLOR_BUFFER_BIT);
+                    GLFramebuffer::popFramebuffer();
+#else
                     EglContext::currentContext()->pushFramebuffer(framebuffer.get());
                     glClear(GL_COLOR_BUFFER_BIT);
                     EglContext::currentContext()->popFramebuffer();
+#endif
                     renderInfo.scrimAvgTextures.push_back(std::move(texture));
                     renderInfo.scrimAvgFramebuffers.push_back(std::move(framebuffer));
                 }
+                renderInfo.scrimAvgSize = backgroundRect.size();
+                renderInfo.scrimAvgLevels = levels;
             }
 
             // Halve each level with the same box-average pass the blur uses,
@@ -1913,6 +1962,11 @@ void BlurEffect::blur(const RenderTarget &renderTarget, const RenderViewport &vi
     m_roundedOnscreenPass.shader->setUniform(m_roundedOnscreenPass.useOklabSaturationLocation, m_settings.general.oklabSaturation ? 1 : 0);
     m_roundedOnscreenPass.shader->setUniform(m_roundedOnscreenPass.saturationLocation, static_cast<float>(m_settings.general.saturation));
     m_roundedOnscreenPass.shader->setUniform(m_roundedOnscreenPass.halfpixelLocation, halfpixel);
+    // The shape boxes in this pass are device pixels, the capture the shader
+    // samples is logical (backgroundRect.size()); the refraction stage needs the
+    // ratio to keep its sample inside the captured backdrop.
+    m_roundedOnscreenPass.shader->setUniform(m_roundedOnscreenPass.viewportScaleLocation,
+        static_cast<float>(viewport.scale()));
     m_roundedOnscreenPass.shader->setUniform(m_roundedOnscreenPass.offsetLocation, combinedBlurSettings.offset * m_upsampleOffset);
     m_roundedOnscreenPass.shader->setUniform(m_roundedOnscreenPass.boxLocation, shaderBox);
     m_roundedOnscreenPass.shader->setUniform(m_roundedOnscreenPass.cornerRadiusLocation, shaderCornerRadius.toVector());
@@ -1923,30 +1977,16 @@ void BlurEffect::blur(const RenderTarget &renderTarget, const RenderViewport &vi
     m_roundedOnscreenPass.shader->setUniform(m_roundedOnscreenPass.opacityLocation, modulation);
     m_roundedOnscreenPass.shader->setUniform(m_roundedOnscreenPass.texUnitLocation, 0);
     m_roundedOnscreenPass.shader->setUniform(m_roundedOnscreenPass.edgeSizePixelsLocation, m_settings.refraction.edgeSizePixels);
-    m_roundedOnscreenPass.shader->setUniform(m_roundedOnscreenPass.highlightWidthPxLocation, m_settings.refraction.highlightWidthPx);
-    // One stable material-space virtual light is shared by every surface.
-    // It is configurable, but never inferred from window position or content.
-    m_roundedOnscreenPass.shader->setUniform(m_roundedOnscreenPass.highlightAngleLocation,
-        m_settings.refraction.highlightAngle);
     m_roundedOnscreenPass.shader->setUniform(m_roundedOnscreenPass.refractionStrengthLocation, m_settings.refraction.refractionStrength);
     m_roundedOnscreenPass.shader->setUniform(m_roundedOnscreenPass.refractionNormalPowLocation, m_settings.refraction.refractionNormalPow);
     m_roundedOnscreenPass.shader->setUniform(m_roundedOnscreenPass.refractionRGBFringingLocation, m_settings.refraction.refractionRGBFringing);
     m_roundedOnscreenPass.shader->setUniform(m_roundedOnscreenPass.refractionOffsetStrengthLocation, m_settings.refraction.refractionOffsetStrength);
-    m_roundedOnscreenPass.shader->setUniform(m_roundedOnscreenPass.refractionBevelIntensityLocation, m_settings.refraction.refractionBevelIntensity);
     m_roundedOnscreenPass.shader->setUniform(m_roundedOnscreenPass.materialSoftnessLocation, m_settings.refraction.materialSoftness);
-    m_roundedOnscreenPass.shader->setUniform(m_roundedOnscreenPass.materialHighlightStrengthLocation, m_settings.refraction.materialHighlightStrength);
     m_roundedOnscreenPass.shader->setUniform(m_roundedOnscreenPass.materialReflectionStrengthLocation, m_settings.refraction.materialReflectionStrength);
 
-    QColor glow(m_settings.general.glowColor);
-    QVector3D glowVec(glow.redF(), glow.greenF(), glow.blueF());
-    m_roundedOnscreenPass.shader->setUniform(m_roundedOnscreenPass.glowColorLocation, glowVec);
-    if (isOverRounded && w->isDock() || m_settings.general.edgeLightingDock && w->isDock() || m_settings.general.edgeLightingTooltip && w->isTooltip()) {
-        m_roundedOnscreenPass.shader->setUniform(m_roundedOnscreenPass.glowStrengthLocation, 0.0);
-        m_roundedOnscreenPass.shader->setUniform(m_roundedOnscreenPass.edgeLightingLocation, false);
-    } else {
-        m_roundedOnscreenPass.shader->setUniform(m_roundedOnscreenPass.glowStrengthLocation, static_cast<float>(glow.alphaF()));
-        m_roundedOnscreenPass.shader->setUniform(m_roundedOnscreenPass.edgeLightingLocation, m_settings.general.edgeLighting);
-    }
+    // The glow colour / edge-lighting uniforms that used to be uploaded here
+    // were read by nothing in the shader, so every setUniform against them was a
+    // silent no-op driven by dead conditions.
 
     // Contrast scrim defaults to off. A surface that declares a KosRoundedBlurRegion
     // carries per-shape scrim state (see protocolShapeUniforms below); anything that
@@ -2026,17 +2066,19 @@ void BlurEffect::blur(const RenderTarget &renderTarget, const RenderViewport &vi
         m_roundedOnscreenPass.shader->setUniform(
             m_roundedOnscreenPass.cornerExponentLocation,
             static_cast<float>(draw.shape.exponent));
-        // Per-shape contrast scrim. scrimTint 0 = black, 1 = white; the shader
-        // maps 0 -> off, 1 -> black, 2 -> white so an off shape can never leak.
+        // Shader modes: 1/2 adaptive black/white, 3/4 fixed black/white.
+        // decay > 1 is the backward-compatible fixed-mode wire encoding.
         if (draw.shape.scrimEnabled) {
             m_roundedOnscreenPass.shader->setUniform(
-                m_roundedOnscreenPass.scrimModeLocation, draw.shape.scrimTint ? 2 : 1);
+                m_roundedOnscreenPass.scrimModeLocation,
+                (draw.shape.scrimDecay > 1.0 ? 3 : 1)
+                    + (draw.shape.scrimTint == 1 ? 1 : 0));
             m_roundedOnscreenPass.shader->setUniform(
                 m_roundedOnscreenPass.scrimCapLocation,
                 static_cast<float>(draw.shape.scrimCap));
             m_roundedOnscreenPass.shader->setUniform(
                 m_roundedOnscreenPass.scrimDecayLocation,
-                static_cast<float>(draw.shape.scrimDecay));
+                static_cast<float>(std::min(draw.shape.scrimDecay, 1.0)));
         } else {
             m_roundedOnscreenPass.shader->setUniform(
                 m_roundedOnscreenPass.scrimModeLocation, 0);

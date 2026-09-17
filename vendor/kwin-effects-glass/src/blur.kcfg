@@ -5,20 +5,8 @@
     http://www.kde.org/standards/kcfg/1.0/kcfg.xsd" >
     <kcfgfile arg="true"/>
     <group name="Effect-blurplus">
-        <entry name="EdgeLighting" type="Bool">
-            <default>false</default>
-        </entry>
-        <entry name="EdgeLightingDock" type="Bool">
-            <default>false</default>
-        </entry>
-        <entry name="EdgeLightingTooltip" type="Bool">
-            <default>false</default>
-        </entry>
         <entry name="ExcludeDecorations" type="Bool">
             <default>false</default>
-        </entry>
-        <entry name="GlowColor" type="String">
-            <default>#00000000</default>
         </entry>
         <entry name="BlurStrength" type="Int">
             <default>15</default>
@@ -142,29 +130,15 @@
         <entry name="RefractionEdgeSize" type="Double">
             <default>20.0</default>
         </entry>
-        <entry name="HighlightWidthPx" type="Double">
-            <default>3.0</default>
-        </entry>
-        <entry name="HighlightAngle" type="Int">
-            <default>45</default>
-            <whatsthis>Direction of the focused edge highlight in degrees. 45 = light from top-left (left-top + right-bottom arcs lit); 225 = opposite diagonal; 0/180 = horizontal axis.</whatsthis>
-        </entry>
         <entry name="RefractionRGBFringing" type="Double">
             <default>1.0</default>
         </entry>
         <entry name="RefractionOffsetStrength" type="Double">
-            <default>8.0</default>
-        </entry>
-        <entry name="RefractionBevelIntensity" type="Int">
-            <default>10</default>
+            <default>0.0</default>
         </entry>
         <entry name="MaterialSoftness" type="Double">
             <default>0.0</default>
             <whatsthis>Shared material softness from 0.0 (clear liquid glass) to 1.0 (diffuse soft glass).</whatsthis>
-        </entry>
-        <entry name="MaterialHighlightStrength" type="Double">
-            <default>1.0</default>
-            <whatsthis>Strength of the narrow liquid highlight in the unified glass material.</whatsthis>
         </entry>
         <entry name="MaterialReflectionStrength" type="Double">
             <default>0.0</default>

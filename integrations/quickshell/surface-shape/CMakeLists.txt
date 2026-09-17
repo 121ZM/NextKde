@@ -21,6 +21,7 @@ ecm_add_wayland_client_protocol(protocol_sources
     BASENAME kos-surface-shape-v1)
 
 add_library(kos_surface_shape MODULE
+    cursoroverride.cpp
     surfaceshape.cpp
     surfaceshapeplugin.cpp
     ${protocol_sources}

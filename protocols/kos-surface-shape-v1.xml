@@ -19,7 +19,7 @@
   <!--
     Version 3 adds set_scrim. The composite must stay binary-compatible with
     v2 clients: the departing v2 server still has to accept set_role (no-op),
-    and the new request must be appended before destroy so the destructor
+    and the new request must be appended after destroy so the destructor
     opcode is unchanged.
   -->
   <interface name="kos_surface_shape_v1" version="3">
@@ -48,10 +48,10 @@
     <request name="destroy" type="destructor"/>
     <!--
       A contrast scrim over this shape, sized to the background it sits on.
-      tint selects a black or white fill; cap is the absolute opacity ceiling;
-      decay scales the auto-derived opacity (a surface may want a calmer shade,
-      e.g. a dock at 0.6 of the default). The compositor maps backdrop luminance
-      to opacity and multiplies by decay, then clamps to cap.
+      tint selects black or white. cap is the opacity ceiling for adaptive mode
+      and the exact opacity for fixed mode. decay values 0..1 scale adaptive
+      opacity; a value above 1 selects fixed mode. This encoding lets an older
+      compositor safely clamp an unknown fixed mode back to adaptive decay 1.
       Deliberately after the destructor: a v2 client's destroy opcode must not
       shift, so new versioned state is appended at the end.
     -->

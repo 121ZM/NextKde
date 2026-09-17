@@ -1,5 +1,8 @@
+#include "cursoroverride.h"
 #include "surfaceshape.h"
 
+#include <QJSEngine>
+#include <QQmlEngine>
 #include <QQmlExtensionPlugin>
 #include <qqml.h>
 
@@ -11,6 +14,10 @@ public:
     void registerTypes(const char *uri) override
     {
         qmlRegisterType<SurfaceShape>(uri, 1, 0, "SurfaceShape");
+        qmlRegisterSingletonType<CursorOverride>(uri, 1, 0, "CursorOverride",
+            [](QQmlEngine *, QJSEngine *) -> QObject * {
+                return new CursorOverride;
+            });
     }
 };
 

@@ -29,10 +29,6 @@ struct GeneralSettings
     float blurRadius;
     float upsampleOffset;
     bool saturationCompensation;
-    QString glowColor;
-    bool edgeLighting;
-    bool edgeLightingDock;
-    bool edgeLightingTooltip;
     bool excludeDecorations;
     bool shapeTrace;
 };
@@ -74,11 +70,7 @@ struct RefractionSettings
     float refractionNormalPow;
     float refractionRGBFringing;
     float refractionOffsetStrength;
-    float refractionBevelIntensity;
-    float highlightWidthPx;
-    float highlightAngle;  // degrees, light direction for the focused highlight
     float materialSoftness;
-    float materialHighlightStrength;
     float materialReflectionStrength;
 };
 

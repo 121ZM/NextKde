@@ -18,7 +18,8 @@ class SurfaceShape : public QObject
     Q_PROPERTY(qreal exponent READ exponent WRITE setExponent NOTIFY exponentChanged)
     Q_PROPERTY(bool enabled READ isEnabled WRITE setEnabled NOTIFY enabledChanged)
     Q_PROPERTY(bool active READ isActive NOTIFY activeChanged)
-    // Contrast scrim sent over protocol v3. scrimTint 0 = black, 1 = white.
+    // Contrast scrim sent over protocol v3. scrimTint 0/1 = black/white;
+    // scrimDecay > 1 selects fixed mode.
     Q_PROPERTY(bool scrimEnabled READ scrimEnabled WRITE setScrimEnabled NOTIFY scrimEnabledChanged)
     Q_PROPERTY(int scrimTint READ scrimTint WRITE setScrimTint NOTIFY scrimTintChanged)
     Q_PROPERTY(qreal scrimCap READ scrimCap WRITE setScrimCap NOTIFY scrimCapChanged)
@@ -77,7 +78,7 @@ private:
     qreal m_exponent = 2.0;
     bool m_enabled = true;
     bool m_scrimEnabled = false;
-    int m_scrimTint = 0; // 0 black, 1 white
+    int m_scrimTint = 0;
     qreal m_scrimCap = 0.0;
     qreal m_scrimDecay = 1.0;
     bool m_syncPending = false;

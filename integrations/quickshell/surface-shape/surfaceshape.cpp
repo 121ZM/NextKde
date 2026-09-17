@@ -33,6 +33,10 @@ bool effectivelyShown(const QQuickItem *item)
     return !window || window->isVisible();
 }
 
+// One warning per process: whether set_scrim may be sent is a property of the
+// compositor this client is bound to, not of any single shape.
+bool warnedScrimUnavailable = false;
+
 class ShapeProtocol : public QObject
 {
 public:
@@ -221,7 +225,9 @@ void SurfaceShape::setScrimCap(qreal cap)
 
 void SurfaceShape::setScrimDecay(qreal decay)
 {
-    decay = std::clamp(decay, 0.0, 1.0);
+    // 0..1 is adaptive decay. Values above 1 encode fixed mode while keeping
+    // the v3 wire request backward-compatible with old compositors.
+    decay = std::clamp(decay, 0.0, 2.0);
     if (qFuzzyCompare(m_scrimDecay, decay)) return;
     m_scrimDecay = decay; Q_EMIT scrimDecayChanged(); scheduleSync();
 }
@@ -279,11 +285,23 @@ void SurfaceShape::sync()
         wl_fixed_from_double(m_radius), wl_fixed_from_double(m_exponent));
     kos_surface_shape_v1_set_enabled(m_shape,
         (m_enabled && effectivelyShown(m_target)) ? 1 : 0);
-    kos_surface_shape_v1_set_scrim(m_shape,
-        (m_scrimEnabled && effectivelyShown(m_target)) ? 1 : 0,
-        m_scrimTint,
-        wl_fixed_from_double(m_scrimCap),
-        wl_fixed_from_double(m_scrimDecay));
+    // set_scrim is since=3, and libwayland-client does not range-check the
+    // opcode: sending it on a proxy bound at an older version is a protocol
+    // error that takes the whole Wayland connection down. Bind-time version is
+    // the compositor's advertised one, so honour it here rather than relying on
+    // the server having created the resource at 3.
+    if (wl_proxy_get_version(reinterpret_cast<struct wl_proxy *>(m_shape))
+        >= KOS_SURFACE_SHAPE_V1_SET_SCRIM_SINCE_VERSION) {
+        kos_surface_shape_v1_set_scrim(m_shape,
+            (m_scrimEnabled && effectivelyShown(m_target)) ? 1 : 0,
+            m_scrimTint,
+            wl_fixed_from_double(m_scrimCap),
+            wl_fixed_from_double(m_scrimDecay));
+    } else if (!warnedScrimUnavailable) {
+        warnedScrimUnavailable = true;
+        qWarning() << "kos-surface-shape: compositor bound below protocol version 3;"
+                   << "the contrast scrim is unavailable";
+    }
 }
 
 void SurfaceShape::releaseShape()

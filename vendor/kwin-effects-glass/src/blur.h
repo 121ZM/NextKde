@@ -51,6 +51,11 @@ struct BlurRenderData
     std::vector<std::unique_ptr<GLTexture>> scrimAvgTextures;
     std::vector<std::unique_ptr<GLFramebuffer>> scrimAvgFramebuffers;
     int scrimAvgLevels = 0;
+    /// Size the scratch chain was built for. The level count alone does not
+    /// change when the capture resizes inside one power-of-two octave, so the
+    /// chain has to be keyed on the size as well or its levels no longer match
+    /// the capture they are averaging.
+    QSize scrimAvgSize;
 };
 
 struct BlurEffectData
@@ -180,6 +185,7 @@ private:
         int saturationLocation;
         int offsetLocation;
         int halfpixelLocation;
+        int viewportScaleLocation;
         int boxLocation;
         int cornerRadiusLocation;
         int cornerExponentLocation;
@@ -188,20 +194,13 @@ private:
         int texUnitLocation;
 
         int edgeSizePixelsLocation;
-        int highlightWidthPxLocation;
-        int highlightAngleLocation;
         int refractionStrengthLocation;
         int refractionNormalPowLocation;
         int refractionRGBFringingLocation;
         int refractionOffsetStrengthLocation;
-        int refractionBevelIntensityLocation;
         int materialSoftnessLocation;
-        int materialHighlightStrengthLocation;
         int materialReflectionStrengthLocation;
 
-        int glowColorLocation;
-        int glowStrengthLocation;
-        int edgeLightingLocation;
         int scrimModeLocation;
         int scrimCapLocation;
         int scrimDecayLocation;

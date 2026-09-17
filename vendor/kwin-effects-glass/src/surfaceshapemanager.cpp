@@ -35,8 +35,12 @@ static const struct kos_surface_shape_v1_interface s_shapeImplementation{
 SurfaceShapeManager::SurfaceShapeManager(Display *display, QObject *parent)
     : QObject(parent)
 {
+    // Must advertise the interface version the protocol declares, or a
+    // conformant client binds at 1 and can never send the since=3 set_scrim
+    // (it would have to skip it silently). The resources below already create
+    // their shape objects at 3.
     m_global = wl_global_create(*display, &kos_surface_shape_manager_v1_interface,
-                                1, this, bindManager);
+                                3, this, bindManager);
 }
 
 SurfaceShapeManager::~SurfaceShapeManager()
@@ -181,9 +185,9 @@ void SurfaceShapeManager::setScrim(wl_client *, wl_resource *resource,
         return;
     }
     shape->value.scrimEnabled = enabled != 0;
-    shape->value.scrimTint = (tint == 1) ? 1 : 0; // 0 black, 1 white
+    shape->value.scrimTint = (tint == 1) ? 1 : 0;
     shape->value.scrimCap = std::clamp(wl_fixed_to_double(cap), 0.0, 1.0);
-    shape->value.scrimDecay = std::clamp(wl_fixed_to_double(decay), 0.0, 1.0);
+    shape->value.scrimDecay = std::clamp(wl_fixed_to_double(decay), 0.0, 2.0);
     shape->manager->changed(shape);
 }
 

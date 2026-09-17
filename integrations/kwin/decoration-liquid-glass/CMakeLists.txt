@@ -36,4 +36,4 @@ target_link_libraries(kos_liquid_glass PRIVATE
 
 install(TARGETS kos_liquid_glass
     DESTINATION ${KDE_INSTALL_PLUGINDIR}/${KDECORATION_PLUGIN_DIR}
-    COMPONENT kwin_plugins)
+    COMPONENT kwin_decoration)

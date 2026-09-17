@@ -60,10 +60,6 @@ void BlurSettings::read()
     general.upsampleOffset = finetune;
     general.saturationCompensation = BlurConfig::blurSaturationCompensation();
 
-    general.glowColor = BlurConfig::glowColor();
-    general.edgeLighting = BlurConfig::edgeLighting();
-    general.edgeLightingDock = BlurConfig::edgeLightingDock();
-    general.edgeLightingTooltip = BlurConfig::edgeLightingTooltip();
     general.excludeDecorations = BlurConfig::excludeDecorations();
     general.shapeTrace = BlurConfig::shapeTrace();
 
@@ -91,15 +87,11 @@ void BlurSettings::read()
     // as the Snell lens displacement and could pull the backdrop across an
     // entire panel.
     refraction.edgeSizePixels = BlurConfig::refractionEdgeSize();
-    refraction.highlightWidthPx = BlurConfig::highlightWidthPx();
-    refraction.highlightAngle = BlurConfig::highlightAngle();
     refraction.refractionStrength = BlurConfig::refractionStrength() / 20.0;
     refraction.refractionNormalPow = BlurConfig::refractionNormalPow() / 2.0;
     refraction.refractionRGBFringing = BlurConfig::refractionRGBFringing() / 20.0;
     refraction.refractionOffsetStrength = BlurConfig::refractionOffsetStrength() / 2.0;
-    refraction.refractionBevelIntensity = BlurConfig::refractionBevelIntensity() / 10.0;
     refraction.materialSoftness = std::clamp(BlurConfig::materialSoftness(), 0.0, 1.0);
-    refraction.materialHighlightStrength = std::clamp(BlurConfig::materialHighlightStrength(), 0.0, 1.0);
     refraction.materialReflectionStrength = std::clamp(BlurConfig::materialReflectionStrength(), 0.0, 1.0);
 }
 

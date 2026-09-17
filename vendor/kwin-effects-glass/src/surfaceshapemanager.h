@@ -21,10 +21,10 @@ struct SurfaceShape
     qreal radius = 0.0;
     qreal exponent = 2.0;
     bool enabled = true;
-    // Contrast scrim. scrimMode is 0 (off), 1 (black) or 2 (white); cap and
-    // decay live only when enabled. Transported by set_scrim (protocol v3).
+    // Contrast scrim transported by set_scrim (protocol v3). Tint 0/1 selects
+    // black/white; decay > 1 selects fixed rather than adaptive opacity.
     bool scrimEnabled = false;
-    int scrimTint = 0; // 0 = black, 1 = white
+    int scrimTint = 0;
     qreal scrimCap = 0.0;
     qreal scrimDecay = 1.0;
 };

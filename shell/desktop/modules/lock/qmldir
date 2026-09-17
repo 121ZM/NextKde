@@ -1,9 +1,0 @@
-module qs.desktop.modules.lock
-
-LockScreen 1.0 LockScreen.qml
-LockWindow 1.0 LockWindow.qml
-LockSurface 1.0 LockSurface.qml
-LockNotificationCard 1.0 LockNotificationCard.qml
-LockMusicCard 1.0 LockMusicCard.qml
-LockPasswordField 1.0 LockPasswordField.qml
-singleton LockService 1.0 LockService.qml
