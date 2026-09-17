@@ -34,17 +34,11 @@ BlurEffectConfig::BlurEffectConfig(QObject *parent, const KPluginMetaData &data)
         const bool customCornerRadius = !useDeclaredCornerRadius;
         const bool dynamicCorners = customCornerRadius && ui.kcfg_DynamicCorners->isChecked();
 
-        ui.labelTopCornerRadius->setEnabled(customCornerRadius);
-        ui.kcfg_TopCornerRadius->setEnabled(customCornerRadius);
-        ui.labelBottomCornerRadius->setEnabled(customCornerRadius);
-        ui.kcfg_BottomCornerRadius->setEnabled(customCornerRadius);
         ui.labelMenuCornerRadius->setEnabled(customCornerRadius);
         ui.kcfg_MenuCornerRadius->setEnabled(customCornerRadius);
         ui.labelDockCornerRadius->setEnabled(customCornerRadius);
         ui.kcfg_DockCornerRadius->setEnabled(customCornerRadius);
-        ui.kcfg_RoundCornersOfMaximizedWindows->setEnabled(customCornerRadius);
         ui.kcfg_DynamicCorners->setEnabled(customCornerRadius);
-        ui.kcfg_DynamicCornersExcludeWindows->setEnabled(dynamicCorners);
         ui.kcfg_DynamicCornersExcludeDocks->setEnabled(dynamicCorners);
         ui.kcfg_DynamicCornersExcludeTooltips->setEnabled(dynamicCorners);
         ui.kcfg_DynamicCornersExcludeMenus->setEnabled(dynamicCorners);

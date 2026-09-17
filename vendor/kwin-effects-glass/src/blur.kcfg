@@ -5,38 +5,8 @@
     http://www.kde.org/standards/kcfg/1.0/kcfg.xsd" >
     <kcfgfile arg="true"/>
     <group name="Effect-blurplus">
-        <entry name="EdgeLighting" type="Bool">
-            <default>false</default>
-        </entry>
-        <entry name="EdgeLightingDock" type="Bool">
-            <default>false</default>
-        </entry>
-        <entry name="EdgeLightingTooltip" type="Bool">
-            <default>false</default>
-        </entry>
-        <entry name="ExcludeDocks" type="Bool">
-            <default>false</default>
-        </entry>
         <entry name="ExcludeDecorations" type="Bool">
             <default>false</default>
-        </entry>
-        <entry name="ExcludeTooltips" type="Bool">
-            <default>false</default>
-        </entry>
-        <entry name="ExcludeMenus" type="Bool">
-            <default>false</default>
-        </entry>
-        <entry name="ExcludeOSD" type="Bool">
-            <default>false</default>
-        </entry>
-        <entry name="TintColor" type="String">
-            <default>#00000000</default>
-        </entry>
-        <entry name="AutoTintAlpha" type="Bool">
-            <default>false</default>
-        </entry>
-        <entry name="GlowColor" type="String">
-            <default>#00000000</default>
         </entry>
         <entry name="BlurStrength" type="Int">
             <default>15</default>
@@ -80,17 +50,19 @@
         <entry name="TransparentBlur" type="Bool">
             <default>true</default>
         </entry>
-        <entry name="TopCornerRadius" type="Double">
-            <default>0.0</default>
-        </entry>
-        <entry name="BottomCornerRadius" type="Double">
-            <default>0.0</default>
-        </entry>
         <entry name="MenuCornerRadius" type="Double">
             <default>0.0</default>
         </entry>
         <entry name="DockCornerRadius" type="Double">
             <default>0.0</default>
+        </entry>
+        <entry name="CornerExponent" type="Double">
+            <default>3.0</default>
+            <whatsthis>Global Quickshell glass corner profile. 2.0 is circular; larger values produce continuous superellipse corners.</whatsthis>
+        </entry>
+        <entry name="ShapeTrace" type="Bool">
+            <default>false</default>
+            <whatsthis>Log every kos-surface-shape-v1 draw decision (declared shapes, their native boxes and the blur region they are clipped against) to the journal. Debug aid for the protocol path; also enabled by the KOS_GLASS_TRACE environment variable, which a running compositor cannot pick up.</whatsthis>
         </entry>
         <entry name="UseDeclaredCornerRadius" type="Bool">
             <default>false</default>
@@ -98,13 +70,7 @@
         <entry name="IgnoreContentBlurRegion" type="Bool">
             <default>false</default>
         </entry>
-        <entry name="RoundCornersOfMaximizedWindows" type="Bool">
-            <default>false</default>
-        </entry>
         <entry name="DynamicCorners" type="Bool">
-            <default>false</default>
-        </entry>
-        <entry name="DynamicCornersExcludeWindows" type="Bool">
             <default>false</default>
         </entry>
         <entry name="DynamicCornersExcludeDocks" type="Bool">
@@ -164,24 +130,19 @@
         <entry name="RefractionEdgeSize" type="Double">
             <default>20.0</default>
         </entry>
-        <entry name="HighlightWidthPx" type="Double">
-            <default>3.0</default>
-        </entry>
-        <entry name="HighlightAngle" type="Int">
-            <default>45</default>
-            <whatsthis>Direction of the focused edge highlight in degrees. 45 = light from top-left (left-top + right-bottom arcs lit); 225 = opposite diagonal; 0/180 = horizontal axis.</whatsthis>
-        </entry>
         <entry name="RefractionRGBFringing" type="Double">
             <default>1.0</default>
         </entry>
         <entry name="RefractionOffsetStrength" type="Double">
-            <default>8.0</default>
+            <default>0.0</default>
         </entry>
-        <entry name="RefractionBevelIntensity" type="Int">
-            <default>10</default>
+        <entry name="MaterialSoftness" type="Double">
+            <default>0.0</default>
+            <whatsthis>Shared material softness from 0.0 (clear liquid glass) to 1.0 (diffuse soft glass).</whatsthis>
         </entry>
-        <entry name="PhysicallyBasedRefraction" type="Bool">
-            <default>false</default>
+        <entry name="MaterialReflectionStrength" type="Double">
+            <default>0.0</default>
+            <whatsthis>Strength of the broad directional soft-glass reflection.</whatsthis>
         </entry>
     </group>
 </kcfg>

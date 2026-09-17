@@ -29,17 +29,8 @@ struct GeneralSettings
     float blurRadius;
     float upsampleOffset;
     bool saturationCompensation;
-    QString tintColor;
-    bool autoTintAlpha;
-    QString glowColor;
-    bool edgeLighting;
-    bool edgeLightingDock;
-    bool edgeLightingTooltip;
-    bool excludeDocks;
     bool excludeDecorations;
-    bool excludeTooltips;
-    bool excludeMenus;
-    bool excludeOSD;
+    bool shapeTrace;
 };
 
 struct ForceBlurSettings
@@ -61,15 +52,12 @@ struct ForceBlurSettings
 
 struct RoundedCornersSettings
 {
-    float windowTopRadius;
-    float windowBottomRadius;
     float menuRadius;
     float dockRadius;
+    float cornerExponent;
     bool useDeclaredCornerRadius;
     bool ignoreContentBlurRegion;
-    bool roundMaximized;
     bool dynamicCorners;
-    bool dynamicCornersExcludeWindows;
     bool dynamicCornersExcludeDocks;
     bool dynamicCornersExcludeTooltips;
     bool dynamicCornersExcludeMenus;
@@ -82,10 +70,8 @@ struct RefractionSettings
     float refractionNormalPow;
     float refractionRGBFringing;
     float refractionOffsetStrength;
-    float refractionBevelIntensity;
-    float highlightWidthPx;
-    float highlightAngle;  // degrees, light direction for the focused highlight
-    bool physicallyBased;
+    float materialSoftness;
+    float materialReflectionStrength;
 };
 
 class BlurSettings

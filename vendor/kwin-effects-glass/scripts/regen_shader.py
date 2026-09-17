@@ -19,10 +19,8 @@ def read(name):
 
 compat_core = read("compat_core.glsl")
 oklab = read("oklab.glsl")
-snells = read("snells-glass.glsl")
 
 glass = read("glass.glsl")
-glass = glass.replace('#include "snells-glass.glsl"', snells)
 
 src = read("onscreen_rounded.glsl")
 expanded = src.replace('#include "oklab.glsl"', oklab)
@@ -37,7 +35,6 @@ checks = {
     "circleMap lens profile": "circleMap" in expanded,
     "analytic gradient gradSdRoundedBox": "gradSdRoundedBox" in expanded,
     "corner-weighted dispersion": "cornerWeight" in expanded,
-    "snells include expanded (no bare include)": '#include "snells' not in expanded,
     "glass.glsl expanded (no bare include)": '#include "glass' not in expanded,
     "sdf.glsl include kept": '#include "sdf.glsl"' in expanded,
 }

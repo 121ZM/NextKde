@@ -1,8 +1,0 @@
-<?xml version="1.0" encoding="UTF-8"?>
-<svg viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg">
-  <!-- Optical weight matches the neighbouring screenshot and theme glyphs. -->
-  <g fill="none" stroke="#ffffff" stroke-width="70" stroke-linecap="round" stroke-linejoin="round">
-    <path d="M512 96v360"/>
-    <path d="M330 198C195 270 112 411 125 563c17 197 184 350 387 350s370-153 387-350c13-152-70-293-205-365"/>
-  </g>
-</svg>

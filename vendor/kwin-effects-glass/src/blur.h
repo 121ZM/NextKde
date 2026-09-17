@@ -23,6 +23,7 @@
 
 namespace KWin
 {
+class SurfaceShapeManager;
 
 #if !defined(GLASS_X11) && !defined(GLASS_KWIN_67)
 class BlurManagerInterface;
@@ -44,6 +45,17 @@ struct BlurRenderData
     /// contains not blurred background behind the window, it's cached.
     std::vector<std::unique_ptr<GLTexture>> textures;
     std::vector<std::unique_ptr<GLFramebuffer>> framebuffers;
+    // Scratch chain for the whole-surface scrim average: the backdrop is
+    // reduced to 1x1 here so every fragment shares one uniform tone instead of
+    // banding on a variegated backdrop.
+    std::vector<std::unique_ptr<GLTexture>> scrimAvgTextures;
+    std::vector<std::unique_ptr<GLFramebuffer>> scrimAvgFramebuffers;
+    int scrimAvgLevels = 0;
+    /// Size the scratch chain was built for. The level count alone does not
+    /// change when the capture resizes inside one power-of-two octave, so the
+    /// chain has to be keyed on the size as well or its levels no longer match
+    /// the capture they are averaging.
+    QSize scrimAvgSize;
 };
 
 struct BlurEffectData
@@ -155,6 +167,7 @@ private:
     BlurRegion decorationBlurRegion(const EffectWindow *w) const;
     bool decorationSupportsBlurBehind(const EffectWindow *w) const;
     bool shouldBlur(const EffectWindow *w, int mask, const WindowPaintData &data) const;
+    bool shapeTraceEnabled() const;
     void updateBlurRegion(EffectWindow *w);
     void repaintDynamicCorners();
     void blur(const RenderTarget &renderTarget, const RenderViewport &viewport, EffectWindow *w, int mask, const BlurRegion &deviceRegion, WindowPaintData &data);
@@ -172,32 +185,27 @@ private:
         int saturationLocation;
         int offsetLocation;
         int halfpixelLocation;
+        int viewportScaleLocation;
         int boxLocation;
         int cornerRadiusLocation;
+        int cornerExponentLocation;
+        int glassEnabledLocation;
         int opacityLocation;
         int texUnitLocation;
 
-        int blurSizeLocation;
         int edgeSizePixelsLocation;
-        int highlightWidthPxLocation;
-        int highlightAngleLocation;
-        int surfaceScaleLocation;
-        int lensStrengthScaleLocation;
         int refractionStrengthLocation;
         int refractionNormalPowLocation;
         int refractionRGBFringingLocation;
         int refractionOffsetStrengthLocation;
-        int refractionBevelIntensityLocation;
-        int physicallyBasedRefractionLocation;
+        int materialSoftnessLocation;
+        int materialReflectionStrengthLocation;
 
-        int tintColorLocation;
-        int tintGrayLocation;
-        int tintStrengthLocation;
-        int autoTintAlphaLocation;
-
-        int glowColorLocation;
-        int glowStrengthLocation;
-        int edgeLightingLocation;
+        int scrimModeLocation;
+        int scrimCapLocation;
+        int scrimDecayLocation;
+        int scrimLumaTexLocation;
+        int scrimLumaValidLocation;
     } m_roundedOnscreenPass;
 
     struct
@@ -224,6 +232,7 @@ private:
         int noiseTextureSizeLocation;
         int boxLocation;
         int cornerRadiusLocation;
+        int cornerExponentLocation;
 
         std::unique_ptr<GLTexture> noiseTexture;
         qreal noiseTextureScale = 1.0;
@@ -231,6 +240,9 @@ private:
     } m_noisePass;
 
     BlurSettings m_settings;
+#ifndef GLASS_X11
+    std::unique_ptr<SurfaceShapeManager> m_surfaceShapeManager;
+#endif
     bool m_valid = false;
 #ifdef GLASS_KWIN_67
     bool m_blurCapabilityRegistered = false;
@@ -250,7 +262,6 @@ private:
     BlurPipelineSettings m_contentBlurSettings{};
     BlurPipelineSettings m_decorationBlurSettings{};
     BlurPipelineSettings m_dockBlurSettings{};
-    BlurPipelineSettings m_fullScreenLauncherBlurSettings{};
     QStringList m_windowClasses;
     bool m_whitelist;
 

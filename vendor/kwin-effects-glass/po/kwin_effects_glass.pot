@@ -312,18 +312,6 @@ msgid "The corner radius only applies to the blur region."
 msgstr ""
 
 #. i18n: ectx: property (text), widget (QLabel, label)
-#: src/kcm/blur_config.ui:789
-#, kde-format
-msgid "Window top corner radius"
-msgstr ""
-
-#. i18n: ectx: property (text), widget (QLabel, label)
-#: src/kcm/blur_config.ui:807
-#, kde-format
-msgid "Window bottom corner radius"
-msgstr ""
-
-#. i18n: ectx: property (text), widget (QLabel, label)
 #: src/kcm/blur_config.ui:825
 #, kde-format
 msgid "Menu corner radius"
@@ -345,12 +333,6 @@ msgstr ""
 #: src/kcm/blur_config.ui:1069
 #, kde-format
 msgid "Ignore content blur region"
-msgstr ""
-
-#. i18n: ectx: property (text), widget (QCheckBox, kcfg_RoundCornersOfMaximizedWindows)
-#: src/kcm/blur_config.ui:859
-#, kde-format
-msgid "Round maximized windows"
 msgstr ""
 
 #. i18n: ectx: property (text), widget (QCheckBox, kcfg_DynamicCorners)
