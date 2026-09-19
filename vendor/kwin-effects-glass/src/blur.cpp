@@ -250,9 +250,16 @@ BlurEffect::BlurEffect()
     m_surfaceShapeManager = std::make_unique<SurfaceShapeManager>(
         waylandServer()->display(), this);
     connect(m_surfaceShapeManager.get(), &SurfaceShapeManager::surfaceShapesChanged,
-            this, [](SurfaceInterface *surface) {
+            this, [this](SurfaceInterface *surface) {
         for (EffectWindow *window : effects->stackingOrder()) {
             if (window->surface() == surface) {
+                // A blur override appearing, disappearing or changing level
+                // changes how far the repaint region has to expand, not just
+                // what is drawn this frame.
+                if (auto it = m_windows.find(window); it != m_windows.end() && it->second.blurItem) {
+                    it->second.blurItem->setPixelsToExpandRepaintsBelowOpaqueRegions(
+                        blurExpandSize(window));
+                }
                 window->addRepaintFull();
                 break;
             }
@@ -412,11 +419,10 @@ void BlurEffect::reconfigure(ReconfigureFlags flags)
         m_settings.general.dockBlurStrength,
         m_settings.general.dockNoiseStrength
     );
-    m_maxIterationCount = std::max({
-        m_contentBlurSettings.iterationCount,
-        m_decorationBlurSettings.iterationCount,
-        m_dockBlurSettings.iterationCount,
-    });
+    m_maxIterationCount = 1;
+    for (const BlurValuesStruct &values : blurStrengthValues) {
+        m_maxIterationCount = std::max<size_t>(m_maxIterationCount, values.iteration);
+    }
     m_expandSize = std::max({
         m_contentBlurSettings.expandSize,
         m_decorationBlurSettings.expandSize,
@@ -435,7 +441,7 @@ void BlurEffect::reconfigure(ReconfigureFlags flags)
     );
 #if PLASMA_VERSION >= 0x060404 && !defined(GLASS_X11)
     for (auto &[window, data] : m_windows) {
-        data.blurItem->setPixelsToExpandRepaintsBelowOpaqueRegions(m_expandSize);
+        data.blurItem->setPixelsToExpandRepaintsBelowOpaqueRegions(blurExpandSize(window));
     }
 #endif
 
@@ -491,6 +497,24 @@ BlurEffect::BlurPipelineSettings BlurEffect::pipelineSettingsForStrength(int blu
         .expandSize = blurOffsets[values.iteration - 1].expandSize,
         .noiseStrength = noiseStrength,
     };
+}
+
+int BlurEffect::blurExpandSize(EffectWindow *w) const
+{
+    int expand = m_expandSize;
+#ifndef GLASS_X11
+    if (w && w->surface() && m_surfaceShapeManager && !blurStrengthValues.isEmpty()) {
+        const QVector<SurfaceShape> shapes = m_surfaceShapeManager->shapesFor(w->surface());
+        for (const SurfaceShape &shape : shapes) {
+            if (!shape.blurEnabled) {
+                continue;
+            }
+            const int level = qBound(1, int(shape.blurLevel), int(blurStrengthValues.size()));
+            expand = std::max(expand, pipelineSettingsForStrength(level - 1, 0).expandSize);
+        }
+    }
+#endif
+    return expand;
 }
 
 void BlurEffect::updateBlurRegion(EffectWindow *w)
@@ -645,7 +669,7 @@ void BlurEffect::updateBlurRegion(EffectWindow *w)
         if (!data.blurItem) {
             data.blurItem = std::make_unique<BackgroundEffectItem>(w->windowItem());
         }
-        data.blurItem->setPixelsToExpandRepaintsBelowOpaqueRegions(m_expandSize);
+        data.blurItem->setPixelsToExpandRepaintsBelowOpaqueRegions(blurExpandSize(w));
         data.blurItem->setEffectBoundingRect(blurRegion(w).boundingRect());
 #endif
     } else {
@@ -1080,8 +1104,9 @@ void BlurEffect::prePaintWindow(EffectWindow *w, WindowPrePaintData &data, std::
     const QRegion oldOpaque = data.opaque;
     if (data.opaque.intersects(m_currentDeviceBlur)) {
         QRegion newOpaque;
+        const int expand = blurExpandSize(w);
         for (const QRect &rect : data.opaque) {
-            newOpaque += rect.adjusted(m_expandSize, m_expandSize, -m_expandSize, -m_expandSize);
+            newOpaque += rect.adjusted(expand, expand, -expand, -expand);
         }
         data.opaque = newOpaque;
         m_currentDeviceBlur -= newOpaque;
@@ -1139,8 +1164,9 @@ void BlurEffect::prePaintWindow(RenderView *view, EffectWindow *w, WindowPrePain
         data.deviceOpaque -= blurArea;
 
         Region expandedBlur = blurArea;
+        const int expand = blurExpandSize(w);
         for (const Rect &rect : blurArea.rects()) {
-            expandedBlur += rect.adjusted(-m_expandSize, -m_expandSize, m_expandSize, m_expandSize);
+            expandedBlur += rect.adjusted(-expand, -expand, expand, expand);
         }
 
         data.devicePaint += (expandedBlur - data.deviceOpaque);
@@ -1408,6 +1434,9 @@ void BlurEffect::blur(const RenderTarget &renderTarget, const RenderViewport &vi
         QRectF nativeBox;
         int vertexOffset = 0;
         int vertexCount = 0;
+        // Compositor blur level 1..15 requested by set_blur, clamped to the
+        // strength table. 0 = follow the window's default blur pipeline.
+        int blurLevel = 0;
     };
     QVector<SurfaceShapeDraw> surfaceShapeDraws;
 
@@ -1478,6 +1507,9 @@ void BlurEffect::blur(const RenderTarget &renderTarget, const RenderViewport &vi
             draw.rects = buildEffectiveShape(transformedShape);
             if (draw.rects.isEmpty()) {
                 continue;
+            }
+            if (shape.blurEnabled && !blurStrengthValues.isEmpty()) {
+                draw.blurLevel = qBound(1, int(shape.blurLevel), int(blurStrengthValues.size()));
             }
             const QRect transformedBounds = transformedShape.boundingRect();
 #ifdef GLASS_X11
@@ -2071,7 +2103,8 @@ void BlurEffect::blur(const RenderTarget &renderTarget, const RenderViewport &vi
         if (draw.shape.scrimEnabled) {
             m_roundedOnscreenPass.shader->setUniform(
                 m_roundedOnscreenPass.scrimModeLocation,
-                draw.shape.scrimDecay > 2.0 ? 5
+                draw.shape.scrimDecay > 3.0 ? 6
+                    : draw.shape.scrimDecay > 2.0 ? 5
                     : (draw.shape.scrimDecay > 1.0 ? 3 : 1)
                         + (draw.shape.scrimTint == 1 ? 1 : 0));
             m_roundedOnscreenPass.shader->setUniform(
@@ -2131,6 +2164,63 @@ void BlurEffect::blur(const RenderTarget &renderTarget, const RenderViewport &vi
         }
     };
 
+    // Per-shape blur overrides (protocol v4 set_blur) each need their own mip
+    // chain: runBlurPass rewrites the shared chain in place and always leaves
+    // its result in framebuffers[1], so every distinct override level runs
+    // first and copies its result into a scratch texture before the default
+    // pass claims framebuffers[1] for itself. The overrides pay one extra
+    // full-backgroundRect blur chain plus one blit each; shapes without an
+    // override keep rendering exactly as before.
+    struct BlurOverridePass
+    {
+        int level;
+        GLTexture *texture;
+        float offset;
+    };
+    QVector<BlurOverridePass> overridePasses;
+    if (!surfaceShapeDraws.isEmpty()) {
+        const int contentNoiseStrength = splitBlurSettings
+            ? contentBlurSettings.noiseStrength
+            : combinedBlurSettings.noiseStrength;
+        QVector<int> overrideLevels;
+        for (const SurfaceShapeDraw &draw : surfaceShapeDraws) {
+            if (draw.blurLevel > 0 && !overrideLevels.contains(draw.blurLevel)) {
+                overrideLevels.append(draw.blurLevel);
+            }
+        }
+        for (int level : overrideLevels) {
+            const BlurPipelineSettings overrideSettings =
+                pipelineSettingsForStrength(level - 1, contentNoiseStrength);
+            runBlurPass(overrideSettings);
+            auto &scratch = renderInfo.blurOverrideScratch[uint(level)];
+            const QSize size = renderInfo.framebuffers[1]->colorAttachment()->size();
+            if (!scratch.framebuffer || scratch.size != size) {
+                auto texture = GLTexture::allocate(
+                    renderInfo.framebuffers[1]->colorAttachment()->internalFormat(), size);
+                if (texture) {
+                    texture->setFilter(GL_LINEAR);
+                    texture->setWrapMode(GL_CLAMP_TO_EDGE);
+                    auto framebuffer = std::make_unique<GLFramebuffer>(texture.get());
+                    if (framebuffer->valid()) {
+                        scratch.texture = std::move(texture);
+                        scratch.framebuffer = std::move(framebuffer);
+                        scratch.size = size;
+                    }
+                }
+            }
+            if (!scratch.framebuffer) {
+                continue;
+            }
+            // Copy the pass result out of the shared chain before the next
+            // pass overwrites framebuffers[1].
+            GLFramebuffer::pushFramebuffer(renderInfo.framebuffers[1].get());
+            scratch.framebuffer->blitFromFramebuffer();
+            GLFramebuffer::popFramebuffer();
+            overridePasses.append({level, scratch.framebuffer->colorAttachment(),
+                                   overrideSettings.offset});
+        }
+    }
+
     GLTexture *contentBlurredTexture = runBlurPass(splitBlurSettings ? contentBlurSettings : combinedBlurSettings);
     const float contentOffset = splitBlurSettings
         ? contentBlurSettings.offset : combinedBlurSettings.offset;
@@ -2140,8 +2230,18 @@ void BlurEffect::blur(const RenderTarget &renderTarget, const RenderViewport &vi
     } else {
         for (const SurfaceShapeDraw &draw : surfaceShapeDraws) {
             protocolShapeUniforms(draw);
-            drawBlurredRegion(contentBlurredTexture, draw.vertexOffset,
-                              draw.vertexCount, contentOffset);
+            const BlurOverridePass *override = nullptr;
+            if (draw.blurLevel > 0) {
+                for (const BlurOverridePass &pass : overridePasses) {
+                    if (pass.level == draw.blurLevel) {
+                        override = &pass;
+                        break;
+                    }
+                }
+            }
+            drawBlurredRegion(override ? override->texture : contentBlurredTexture,
+                              draw.vertexOffset, draw.vertexCount,
+                              override ? override->offset : contentOffset);
         }
         m_roundedOnscreenPass.shader->setUniform(
             m_roundedOnscreenPass.boxLocation, shaderBox);
