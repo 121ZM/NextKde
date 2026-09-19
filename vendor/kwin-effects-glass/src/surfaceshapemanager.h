@@ -27,6 +27,12 @@ struct SurfaceShape
     int scrimTint = 0;
     qreal scrimCap = 0.0;
     qreal scrimDecay = 1.0;
+    // Per-shape blur override transported by set_blur (protocol v4). Disabled
+    // keeps the shape on the window's default blur pipeline; blurLevel is the
+    // compositor blur level 1..15, the same scale as the global kwinrc
+    // BlurStrength.
+    bool blurEnabled = false;
+    uint blurLevel = 1;
 };
 
 class SurfaceShapeManager : public QObject
@@ -60,6 +66,8 @@ public: // Wayland C dispatch table callbacks.
     static void setScrim(wl_client *client, wl_resource *resource,
                          uint32_t enabled, uint32_t tint,
                          wl_fixed_t cap, wl_fixed_t decay);
+    static void setBlur(wl_client *client, wl_resource *resource,
+                        uint32_t enabled, uint32_t level);
     static void destroyShape(wl_client *client, wl_resource *resource);
 
 private:

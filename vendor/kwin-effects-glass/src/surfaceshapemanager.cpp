@@ -30,6 +30,7 @@ static const struct kos_surface_shape_v1_interface s_shapeImplementation{
     SurfaceShapeManager::setRole,
     SurfaceShapeManager::destroyShape,
     SurfaceShapeManager::setScrim,
+    SurfaceShapeManager::setBlur,
 };
 
 SurfaceShapeManager::SurfaceShapeManager(Display *display, QObject *parent)
@@ -37,10 +38,10 @@ SurfaceShapeManager::SurfaceShapeManager(Display *display, QObject *parent)
 {
     // Must advertise the interface version the protocol declares, or a
     // conformant client binds at 1 and can never send the since=3 set_scrim
-    // (it would have to skip it silently). The resources below already create
-    // their shape objects at 3.
+    // or the since=4 set_blur (it would have to skip them silently). The
+    // resources below already create their shape objects at 4.
     m_global = wl_global_create(*display, &kos_surface_shape_manager_v1_interface,
-                                3, this, bindManager);
+                                4, this, bindManager);
 }
 
 SurfaceShapeManager::~SurfaceShapeManager()
@@ -82,7 +83,7 @@ void SurfaceShapeManager::bindManager(wl_client *client, void *data,
                                       uint32_t version, uint32_t id)
 {
     wl_resource *resource = wl_resource_create(client,
-        &kos_surface_shape_manager_v1_interface, std::min(version, 3u), id);
+        &kos_surface_shape_manager_v1_interface, std::min(version, 4u), id);
     wl_resource_set_implementation(resource, &s_managerImplementation, data, nullptr);
 }
 
@@ -104,7 +105,7 @@ void SurfaceShapeManager::getShape(wl_client *client, wl_resource *resource,
     shape->manager = manager;
     shape->surface = surface;
     shape->value.id = manager->m_nextId++;
-    shape->resource = wl_resource_create(client, &kos_surface_shape_v1_interface, 3, id);
+    shape->resource = wl_resource_create(client, &kos_surface_shape_v1_interface, 4, id);
     wl_resource_set_implementation(shape->resource, &s_shapeImplementation, shape,
                                    destroyShapeResource);
     shape->surfaceDestroyed = connect(surface, &QObject::destroyed, manager,
@@ -188,6 +189,21 @@ void SurfaceShapeManager::setScrim(wl_client *, wl_resource *resource,
     shape->value.scrimTint = (tint == 1) ? 1 : 0;
     shape->value.scrimCap = std::clamp(wl_fixed_to_double(cap), 0.0, 1.0);
     shape->value.scrimDecay = std::clamp(wl_fixed_to_double(decay), 0.0, 4.0);
+    shape->manager->changed(shape);
+}
+
+void SurfaceShapeManager::setBlur(wl_client *, wl_resource *resource,
+                                  uint32_t enabled, uint32_t level)
+{
+    auto *shape = static_cast<ShapeResource *>(wl_resource_get_user_data(resource));
+    if (!shape->manager) {
+        return;
+    }
+    shape->value.blurEnabled = enabled != 0;
+    // The compositor blur table is 15 steps. The precise clamp against the
+    // table length happens at consumption (blur.cpp); this only rejects
+    // nonsense so a hostile value cannot reach far.
+    shape->value.blurLevel = std::clamp<uint>(level, 1, 15);
     shape->manager->changed(shape);
 }
 

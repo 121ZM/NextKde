@@ -36,6 +36,7 @@ bool effectivelyShown(const QQuickItem *item)
 // One warning per process: whether set_scrim may be sent is a property of the
 // compositor this client is bound to, not of any single shape.
 bool warnedScrimUnavailable = false;
+bool warnedBlurUnavailable = false;
 
 class ShapeProtocol : public QObject
 {
@@ -74,7 +75,7 @@ private:
         if (qstrcmp(interface, kos_surface_shape_manager_v1_interface.name) == 0) {
             self->m_manager = static_cast<kos_surface_shape_manager_v1 *>(
                 wl_registry_bind(registry, name,
-                    &kos_surface_shape_manager_v1_interface, std::min(version, 3u)));
+                    &kos_surface_shape_manager_v1_interface, std::min(version, 4u)));
             self->m_globalName = name;
             Q_EMIT self->available();
         }
@@ -232,6 +233,21 @@ void SurfaceShape::setScrimDecay(qreal decay)
     m_scrimDecay = decay; Q_EMIT scrimDecayChanged(); scheduleSync();
 }
 
+void SurfaceShape::setBlurEnabled(bool enabled)
+{
+    if (m_blurEnabled == enabled) return;
+    m_blurEnabled = enabled; Q_EMIT blurEnabledChanged(); scheduleSync();
+}
+
+void SurfaceShape::setBlurLevel(int level)
+{
+    // The compositor blur table is 15 steps; the global path writes 1..15
+    // through the same scale, so clamp here rather than trusting the caller.
+    level = std::clamp(level, 1, 15);
+    if (m_blurLevel == level) return;
+    m_blurLevel = level; Q_EMIT blurLevelChanged(); scheduleSync();
+}
+
 void SurfaceShape::handleWindowChanged(QQuickWindow *window)
 {
     if (m_window == window) { scheduleSync(); return; }
@@ -301,6 +317,16 @@ void SurfaceShape::sync()
         warnedScrimUnavailable = true;
         qWarning() << "kos-surface-shape: compositor bound below protocol version 3;"
                    << "the contrast scrim is unavailable";
+    }
+    // set_blur is since=4, guarded the same way as set_scrim above: the
+    // opcode check protects the connection against an older compositor.
+    if (wl_proxy_get_version(reinterpret_cast<struct wl_proxy *>(m_shape))
+        >= KOS_SURFACE_SHAPE_V1_SET_BLUR_SINCE_VERSION) {
+        kos_surface_shape_v1_set_blur(m_shape, m_blurEnabled ? 1 : 0, m_blurLevel);
+    } else if (m_blurEnabled && !warnedBlurUnavailable) {
+        warnedBlurUnavailable = true;
+        qWarning() << "kos-surface-shape: compositor bound below protocol version 4;"
+                   << "the per-shape blur override is unavailable";
     }
 }
 

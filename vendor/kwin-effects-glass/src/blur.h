@@ -56,6 +56,17 @@ struct BlurRenderData
     /// chain has to be keyed on the size as well or its levels no longer match
     /// the capture they are averaging.
     QSize scrimAvgSize;
+    /// One scratch capture per declared blur-override level (protocol v4
+    /// set_blur). runBlurPass overwrites the shared mip chain in place, so a
+    /// level's result has to be copied out here before the next pass -- or the
+    /// default one -- runs. Keyed by the compositor blur level.
+    struct BlurOverrideScratch
+    {
+        std::unique_ptr<GLTexture> texture;
+        std::unique_ptr<GLFramebuffer> framebuffer;
+        QSize size;
+    };
+    std::unordered_map<uint, BlurOverrideScratch> blurOverrideScratch;
 };
 
 struct BlurEffectData
@@ -174,6 +185,10 @@ private:
     GLTexture *ensureNoiseTexture(int noiseStrength);
     QMatrix4x4 colorMatrix(const float &brightness, const float &saturation, const float &contrast) const;
     BlurPipelineSettings pipelineSettingsForStrength(int blurStrength, int noiseStrength) const;
+    /// The pixels that have to be repainted below opaque regions so a moving
+    /// blur never exposes unblurred content: the global expand, raised to the
+    /// strongest expand any blur-override shape on this window's surface needs.
+    int blurExpandSize(EffectWindow *w) const;
 
 private:
     struct

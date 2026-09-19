@@ -24,6 +24,11 @@ class SurfaceShape : public QObject
     Q_PROPERTY(int scrimTint READ scrimTint WRITE setScrimTint NOTIFY scrimTintChanged)
     Q_PROPERTY(qreal scrimCap READ scrimCap WRITE setScrimCap NOTIFY scrimCapChanged)
     Q_PROPERTY(qreal scrimDecay READ scrimDecay WRITE setScrimDecay NOTIFY scrimDecayChanged)
+    // Blur strength override sent over protocol v4. blurEnabled=false keeps the
+    // shape on the window's default blur pipeline; blurLevel is the compositor
+    // blur level 1..15 (the global kwinrc BlurStrength scale).
+    Q_PROPERTY(bool blurEnabled READ blurEnabled WRITE setBlurEnabled NOTIFY blurEnabledChanged)
+    Q_PROPERTY(int blurLevel READ blurLevel WRITE setBlurLevel NOTIFY blurLevelChanged)
 
 public:
     explicit SurfaceShape(QObject *parent = nullptr);
@@ -46,6 +51,10 @@ public:
     void setScrimCap(qreal cap);
     qreal scrimDecay() const { return m_scrimDecay; }
     void setScrimDecay(qreal decay);
+    bool blurEnabled() const { return m_blurEnabled; }
+    void setBlurEnabled(bool enabled);
+    int blurLevel() const { return m_blurLevel; }
+    void setBlurLevel(int level);
 
 Q_SIGNALS:
     void targetChanged();
@@ -57,6 +66,8 @@ Q_SIGNALS:
     void scrimTintChanged();
     void scrimCapChanged();
     void scrimDecayChanged();
+    void blurEnabledChanged();
+    void blurLevelChanged();
 
 private Q_SLOTS:
     void scheduleSync();
@@ -81,6 +92,8 @@ private:
     int m_scrimTint = 0;
     qreal m_scrimCap = 0.0;
     qreal m_scrimDecay = 1.0;
+    bool m_blurEnabled = false;
+    int m_blurLevel = 1;
     bool m_syncPending = false;
     // The published geometry is a scene rectangle, so it also moves when an
     // ancestor does -- a change the target's own x/y signals cannot see.
