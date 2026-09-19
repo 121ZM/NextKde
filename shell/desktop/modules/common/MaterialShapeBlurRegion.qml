@@ -1,107 +1,90 @@
 import Quickshell
 import QtQuick
+import "MaterialShape.mjs" as Geometry
 
-// A blur region shaped like MaterialFlower's outline — the flower silhouette.
+// The compositor blur region for one Material outline.
 //
-// Why scanlines instead of ellipses: Quickshell's `RegionShape.Ellipse` is
-// axis-aligned and the twelve lobes are distributed radially, so no set of
-// axis-aligned ellipses reproduces them, and `Intersection` cannot build a sine
-// lobe out of circles either; a single inscribed circle would blur far less
-// than the flower. `Region.regions` is a readonly list too, so JS cannot push a
-// computed rectangle list into it — the slots below are therefore declared
-// statically and each one binds to a precomputed band.
-//
-// Geometry is the same polar curve MaterialFlower draws:
-//     r(theta) = R * (1 - amplitude + amplitude * sin(lobes * theta))
-// and bands are produced by a scanline fill of that polygon. Every horizontal
-// line crosses the shape at most twice (the smallest radius is
-// R * (1 - 2*amplitude), so the centre stays solid), which is what makes a
-// fixed two-slots-per-row layout exact rather than approximate. The region is
-// the flower's own content area, so the frost edge lands on the outline that is
-// actually drawn and never spills past it.
+// Wayland regions are rectangles, and the shapes here are concave -- petals,
+// notches, spikes -- so no set of axis-aligned ellipses reproduces them and
+// `Region.regions` is a readonly list that JS cannot push into. The outline is
+// therefore walked row by row (a scanline fill) and each row publishes the span
+// or spans it covers. The geometry comes from MaterialShape.mjs, the same
+// outline MaterialShape paints, so the frosted edge lands on the drawn one
+// instead of near it -- and the two cannot drift, because there is one outline
+// rather than two descriptions of it.
 //
 // Coordinates are surface coordinates, exactly like RoundedBlurRegion: `item`
-// must be the positioned wrapper whose x/y are the card's surface position.
+// must be the positioned wrapper whose x/y are the card's surface position. A
+// panel nested inside another item reports 0 there, which puts the frost at the
+// window origin.
+//
+// The rows below are declared statically, in the only shape QML allows: 24
+// scanlines x 4 spans. Four is what the shapes a *card* is allowed to wear
+// need, and fitsRegion() in the geometry module is the check (the library also
+// has spikier members -- boom, softBoom -- which is why the constant is not
+// simply "2"). Empty slots collapse to zero-size regions, so a shape that
+// crosses a row once costs one rectangle and three no-ops.
 Region {
     id: root
 
     required property Item item
-    property int lobes: 12
-    property real amplitude: 0.075
-    // Rows in the scanline fill. More rows means a finer stair on the lobes;
-    // 32 keeps the region under 64 rectangles, which KWin handles comfortably.
-    property int sliceCount: 32
-    // Set false to publish nothing (the component is kept alive but yields an
-    // empty region).
+    // Any name from the MaterialShape library.
+    property string shape: "circle"
+    // Must match the painter's strength, or the frost lands off the paint.
+    property real strength: 1
+    // Set false to publish nothing while keeping the component alive.
     property bool active: true
+    // Must match the painter's insets, or the frost lands off the paint.
+    property real horizontalInset: 0
+    property real verticalInset: 0
+    // Scanlines. More rows means a finer stair on the lobes; the frost behind
+    // the edge is blurred anyway, so this is about the silhouette, not about
+    // anti-aliasing.
+    property int sliceCount: 24
+    // Must stay in step with the number of declared slots below.
+    readonly property int spansPerRow: 4
 
-    readonly property real outlineInset: 1
-    // MaterialFlower is centred in its parent and 18px smaller than the card's
-    // short side. The region has to reproduce that exactly, or the blur edge
-    // will not sit on the outline that is actually drawn.
-    property real inset: 18
-    readonly property real radius: Math.max(0,
-        (Math.min(item.width, item.height) - inset) / 2 - outlineInset)
+    readonly property var outline: Geometry.shapeOutline(shape, strength)
+    readonly property real halfWidth: Math.max(0, item.width / 2 - horizontalInset)
+    readonly property real halfHeight: Math.max(0, item.height / 2 - verticalInset)
 
-    // The flower outline in surface coordinates.
-    function outline() {
-        const points = []
-        const count = 240
-        const cx = item.x + item.width / 2
-        const cy = item.y + item.height / 2
-        for (let index = 0; index <= count; ++index) {
-            const angle = index / count * Math.PI * 2
-            const ripple = 1 - amplitude + amplitude * Math.sin(angle * lobes)
-            points.push(Qt.point(cx + Math.cos(angle) * radius * ripple,
-                cy + Math.sin(angle) * radius * ripple))
-        }
-        return points
-    }
-
-    // Scanline fill: sliceCount rows x 2 slots, empty slots are null.
+    // sliceCount * spansPerRow entries, null where the row has fewer spans than
+    // slots. Rebuilt only when the card's geometry or outline changes.
     readonly property var bands: {
-        if (!active || radius <= 0)
-            return []
-        const points = outline()
-        const step = radius * 2 / sliceCount
-        const top = item.y + item.height / 2 - radius
-        const out = []
-        for (let row = 0; row < sliceCount; ++row) {
-            const scanY = top + (row + 0.5) * step
-            const crossings = []
-            for (let index = 0; index < points.length - 1; ++index) {
-                const a = points[index]
-                const b = points[index + 1]
-                if ((a.y <= scanY) !== (b.y <= scanY)) {
-                    const t = (scanY - a.y) / (b.y - a.y)
-                    crossings.push(a.x + t * (b.x - a.x))
-                }
+        const outline = root.outline
+        const rows = Math.max(1, root.sliceCount)
+        const halfWidth = root.halfWidth
+        const halfHeight = root.halfHeight
+        const result = []
+        if (!root.active || halfWidth <= 0 || halfHeight <= 0)
+            return result
+        const centerX = root.item.x + root.item.width / 2
+        const centerY = root.item.y + root.item.height / 2
+        const rowHeight = halfHeight * 2 / rows
+        for (let row = 0; row < rows; ++row) {
+            const offset = -halfHeight + (row + 0.5) * rowHeight
+            const spans = Geometry.spansAt(outline, offset, halfWidth, halfHeight)
+            for (let slot = 0; slot < root.spansPerRow; ++slot) {
+                const span = spans[slot]
+                result.push(span ? {
+                    x: centerX + span.left,
+                    y: centerY + offset - rowHeight / 2,
+                    width: span.right - span.left,
+                    height: rowHeight
+                } : null)
             }
-            crossings.sort(function (left, right) { return left - right })
-            out.push(band(crossings, 0, scanY - step / 2, step))
-            out.push(band(crossings, 1, scanY - step / 2, step))
         }
-        return out
+        return result
     }
 
-    function band(crossings, index, y, height) {
-        const left = crossings[index * 2]
-        const right = crossings[index * 2 + 1]
-        if (left === undefined || right === undefined || right - left <= 0)
-            return null
-        return { x: left, y: y, width: right - left, height: height }
-    }
-
-    // Read one field of one slot, rounded to the integer the region wants.
+    // One field of one slot, rounded to the integers a region wants. Missing
+    // slots answer 0, which is what collapses them: a zero-size rectangle
+    // contributes nothing to the union.
     function slot(index, field) {
         const entry = root.bands[index]
-        if (!entry)
-            return 0
-        return Math.round(entry[field])
+        return entry ? Math.round(entry[field]) : 0
     }
 
-    // Two slots per scanline row. `Region.regions` is a readonly list, so these
-    // have to be declared; the count must stay at sliceCount * 2.
     Region { x: root.slot(0, "x"); y: root.slot(0, "y"); width: root.slot(0, "width"); height: root.slot(0, "height") }
     Region { x: root.slot(1, "x"); y: root.slot(1, "y"); width: root.slot(1, "width"); height: root.slot(1, "height") }
     Region { x: root.slot(2, "x"); y: root.slot(2, "y"); width: root.slot(2, "width"); height: root.slot(2, "height") }
@@ -166,4 +149,36 @@ Region {
     Region { x: root.slot(61, "x"); y: root.slot(61, "y"); width: root.slot(61, "width"); height: root.slot(61, "height") }
     Region { x: root.slot(62, "x"); y: root.slot(62, "y"); width: root.slot(62, "width"); height: root.slot(62, "height") }
     Region { x: root.slot(63, "x"); y: root.slot(63, "y"); width: root.slot(63, "width"); height: root.slot(63, "height") }
+    Region { x: root.slot(64, "x"); y: root.slot(64, "y"); width: root.slot(64, "width"); height: root.slot(64, "height") }
+    Region { x: root.slot(65, "x"); y: root.slot(65, "y"); width: root.slot(65, "width"); height: root.slot(65, "height") }
+    Region { x: root.slot(66, "x"); y: root.slot(66, "y"); width: root.slot(66, "width"); height: root.slot(66, "height") }
+    Region { x: root.slot(67, "x"); y: root.slot(67, "y"); width: root.slot(67, "width"); height: root.slot(67, "height") }
+    Region { x: root.slot(68, "x"); y: root.slot(68, "y"); width: root.slot(68, "width"); height: root.slot(68, "height") }
+    Region { x: root.slot(69, "x"); y: root.slot(69, "y"); width: root.slot(69, "width"); height: root.slot(69, "height") }
+    Region { x: root.slot(70, "x"); y: root.slot(70, "y"); width: root.slot(70, "width"); height: root.slot(70, "height") }
+    Region { x: root.slot(71, "x"); y: root.slot(71, "y"); width: root.slot(71, "width"); height: root.slot(71, "height") }
+    Region { x: root.slot(72, "x"); y: root.slot(72, "y"); width: root.slot(72, "width"); height: root.slot(72, "height") }
+    Region { x: root.slot(73, "x"); y: root.slot(73, "y"); width: root.slot(73, "width"); height: root.slot(73, "height") }
+    Region { x: root.slot(74, "x"); y: root.slot(74, "y"); width: root.slot(74, "width"); height: root.slot(74, "height") }
+    Region { x: root.slot(75, "x"); y: root.slot(75, "y"); width: root.slot(75, "width"); height: root.slot(75, "height") }
+    Region { x: root.slot(76, "x"); y: root.slot(76, "y"); width: root.slot(76, "width"); height: root.slot(76, "height") }
+    Region { x: root.slot(77, "x"); y: root.slot(77, "y"); width: root.slot(77, "width"); height: root.slot(77, "height") }
+    Region { x: root.slot(78, "x"); y: root.slot(78, "y"); width: root.slot(78, "width"); height: root.slot(78, "height") }
+    Region { x: root.slot(79, "x"); y: root.slot(79, "y"); width: root.slot(79, "width"); height: root.slot(79, "height") }
+    Region { x: root.slot(80, "x"); y: root.slot(80, "y"); width: root.slot(80, "width"); height: root.slot(80, "height") }
+    Region { x: root.slot(81, "x"); y: root.slot(81, "y"); width: root.slot(81, "width"); height: root.slot(81, "height") }
+    Region { x: root.slot(82, "x"); y: root.slot(82, "y"); width: root.slot(82, "width"); height: root.slot(82, "height") }
+    Region { x: root.slot(83, "x"); y: root.slot(83, "y"); width: root.slot(83, "width"); height: root.slot(83, "height") }
+    Region { x: root.slot(84, "x"); y: root.slot(84, "y"); width: root.slot(84, "width"); height: root.slot(84, "height") }
+    Region { x: root.slot(85, "x"); y: root.slot(85, "y"); width: root.slot(85, "width"); height: root.slot(85, "height") }
+    Region { x: root.slot(86, "x"); y: root.slot(86, "y"); width: root.slot(86, "width"); height: root.slot(86, "height") }
+    Region { x: root.slot(87, "x"); y: root.slot(87, "y"); width: root.slot(87, "width"); height: root.slot(87, "height") }
+    Region { x: root.slot(88, "x"); y: root.slot(88, "y"); width: root.slot(88, "width"); height: root.slot(88, "height") }
+    Region { x: root.slot(89, "x"); y: root.slot(89, "y"); width: root.slot(89, "width"); height: root.slot(89, "height") }
+    Region { x: root.slot(90, "x"); y: root.slot(90, "y"); width: root.slot(90, "width"); height: root.slot(90, "height") }
+    Region { x: root.slot(91, "x"); y: root.slot(91, "y"); width: root.slot(91, "width"); height: root.slot(91, "height") }
+    Region { x: root.slot(92, "x"); y: root.slot(92, "y"); width: root.slot(92, "width"); height: root.slot(92, "height") }
+    Region { x: root.slot(93, "x"); y: root.slot(93, "y"); width: root.slot(93, "width"); height: root.slot(93, "height") }
+    Region { x: root.slot(94, "x"); y: root.slot(94, "y"); width: root.slot(94, "width"); height: root.slot(94, "height") }
+    Region { x: root.slot(95, "x"); y: root.slot(95, "y"); width: root.slot(95, "width"); height: root.slot(95, "height") }
 }
