@@ -29,6 +29,20 @@ namespace
 {
 constexpr auto dbusPath = "/KOSDockWindowAnimation";
 
+// Fades the glass material of a window this effect is animating. The vendored
+// glass effect (see vendor/kwin-effects-glass/src/blur.cpp) blurs the backdrop
+// where the window's frame is, and that region cannot follow the deformation
+// this effect applies. Fading the material out while the window is clearly
+// moving and back in while it is coming home keeps a blurred copy of the title
+// bar's wallpaper from being left behind in the first place, without the
+// material visibly switching on or off. EffectWindow::data() is shared between
+// all effects, so both sides read the same role; unset means 1 (fully opaque),
+// which is what every other window sees.
+constexpr int KosDockAnimationGlassFadeRole = 0x4b4f5342; // "KOSB"
+// Share of the timeline used for that fade. Minimizing fades out over the first
+// part, restoring and opening fade in over the last one.
+constexpr qreal kGlassFadeSpan = 0.35;
+
 QVariant ownerVariant(const Effect *effect)
 {
     return QVariant::fromValue(static_cast<void *>(const_cast<Effect *>(effect)));
@@ -374,6 +388,9 @@ void DockWindowAnimationEffect::finishAnimation(EffectWindow *window)
 {
     if (!window)
         return;
+    // The window is painted normally again, so the glass material is restored
+    // for anything that reads the fade after this animation.
+    window->setData(KosDockAnimationGlassFadeRole, 1.0);
     if (const auto it = m_animations.find(window); it != m_animations.end()) {
         unredirect(window);
         m_animations.erase(it);
@@ -678,6 +695,18 @@ void DockWindowAnimationEffect::apply(EffectWindow *window, int mask,
     const qreal fadeProgress = smoothStep(
         (it->timeLine.value() - 0.80) / 0.20);
     data.multiplyOpacity(1.0 - fadeProgress);
+
+    // The glass backdrop is anchored to the window's frame and cannot follow
+    // the deformation, so it is faded with the animation instead of being left
+    // behind: minimizing drops the material while the body is already streaming
+    // into the Dock, restoring and opening bring it back during the final
+    // approach, where the window itself is about to cover that area.
+    const qreal arrived = 1.0 - it->timeLine.value();
+    const qreal glassFade = it->transition == Transition::Minimize
+        ? 1.0 - smoothStep(it->timeLine.value() / kGlassFadeSpan)
+        : smoothStep((arrived - (1.0 - kGlassFadeSpan)) / kGlassFadeSpan);
+    window->setData(KosDockAnimationGlassFadeRole, glassFade);
+
     if (m_morphStyle == MorphStyle::Genie
             && it->transition != Transition::Open)
         applyBottomGenie(window, *it, quads);
