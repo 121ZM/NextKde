@@ -1350,12 +1350,22 @@ void BlurEffect::blur(const RenderTarget &renderTarget, const RenderViewport &vi
     }
     bool isOverRounded = false;
 
-    const bool usesGlobalQuickshellMaterial = isQuickshellWindow(w);
-    const bool isQuickshellSurface = usesGlobalQuickshellMaterial
+    const bool isQuickshellWindowSurface = isQuickshellWindow(w);
+    // KOS: the liquid material is tied to a declared shape, not merely to being a
+    // Quickshell window. Declared shapes are the geometry that material is drawn
+    // from, and the glass forms declare one per card; a Quickshell surface that
+    // declares nothing therefore stays on the plain blur pipeline and never
+    // enters refraction, glints, or liquid noise. That is what lets the Material
+    // form read as frost instead of as glass -- its cards paint themselves and
+    // publish a blur region, and publish no shape at all.
+    const bool usesGlobalQuickshellMaterial = isQuickshellWindowSurface
+        && !declaredSurfaceShapes.isEmpty();
+    // Geometry, unlike the material, still follows the window itself: the region
+    // has to keep being reconstructed as a shell card whether or not a shape was
+    // declared. Ordinary windows keep the same blur pipeline but never enter
+    // refraction, glints, or liquid noise.
+    const bool isQuickshellSurface = isQuickshellWindowSurface
         || !declaredSurfaceShapes.isEmpty();
-    // A declared shape is geometry only. The liquid material is the global
-    // Quickshell default; ordinary windows keep the same blur pipeline but
-    // never enter refraction, glints, or liquid noise.
     // The window's own corner radius still feeds the region reconstruction
     // (contentRegion()) and, through setBorderRadius() below, KWin's own
     // window rounding for *every* surface -- zeroing it for non-Quickshell
@@ -1496,6 +1506,19 @@ void BlurEffect::blur(const RenderTarget &renderTarget, const RenderViewport &vi
                     << "shapes:" << declaredShapeBounds << "region:" << effectShape.boundingRect()
                     << "translation:" << declaredShapeTranslation;
             }
+            // KOS: a declared set that does not describe this surface's region
+            // cannot supply its material geometry. Left alone, the alignment
+            // below applies one translation for every shape and slides the
+            // whole card's glass by the difference -- which is what a region
+            // shaped by one of the cards (the desk clock's gear) triggers, since
+            // that card deliberately declares no shape: the declared set becomes
+            // a strict subset of the region.
+            //
+            // Dropping the draws leaves surfaceShapeDraws empty, and the
+            // region-driven path below then supplies both the geometry and the
+            // blur level from the region the compositor actually published.
+            draws.clear();
+            shapeGeometry = decltype(shapeGeometry){};
         }
         for (const SurfaceShape &shape : declaredSurfaceShapes) {
             const QRect logicalRect = shape.geometry.toAlignedRect();
@@ -1545,6 +1568,49 @@ void BlurEffect::blur(const RenderTarget &renderTarget, const RenderViewport &vi
                 << "blur region geometry;" << (w && w->surface() ? "window" : "no-window")
                 << "declared" << declaredSurfaceShapes.size()
                 << "effectShape" << effectShape.boundingRect();
+        }
+    }
+
+    // ── KOS: region-shaped material for a surface with no declared shape ─────
+    //
+    // A surface can publish a blur region of any shape — the region is a list of
+    // rectangles and the compositor blurs exactly what they cover — but its
+    // *material* is drawn from the SurfaceShape declarations, and
+    // kos_surface_shape_v1 can only declare a rectangle with rounded corners.
+    // The desk clock's gear therefore publishes a region and no shape at all.
+    //
+    // Without a declaration there is also no per-shape blur level, so such a
+    // surface falls back to the window's content strength. On this shell that is
+    // BlurStrength=1, a single down/up pass: the finish then reads as a tinted
+    // plate rather than as frosted. Adopt the region's own geometry as the
+    // material shape and floor the blur level, so a region-shaped surface gets
+    // the frost its shape implies. kwinrc can still raise it via BlurStrength.
+    //
+    // The geometry needs no work here: effectiveContentShape was initialised
+    // from the blur region at the top of this function, and neither overriding
+    // branch below can have run, because a declared shape set is precisely what
+    // this case does not have.
+    constexpr int kMinimumRegionMaterialLevel = 6;
+    if (surfaceShapeDraws.isEmpty() && !contentShape.isEmpty()) {
+        SurfaceShapeDraw draw;
+        draw.rects = buildEffectiveShape(contentShape);
+        if (!draw.rects.isEmpty()) {
+            draw.blurLevel = qBound(1,
+                std::max(kMinimumRegionMaterialLevel,
+                    static_cast<int>(m_settings.general.blurStrength)),
+                static_cast<int>(blurStrengthValues.size()));
+            const QRect transformedBounds = contentShape.boundingRect();
+#ifdef GLASS_X11
+            draw.nativeBox = snapToPixelGridF(scaledRect(transformedBounds,
+                viewport.scale())).translated(-scaledBackgroundRect.topLeft());
+#else
+            draw.nativeBox = QRectF(transformedBounds.x() * viewport.scale(),
+                transformedBounds.y() * viewport.scale(),
+                transformedBounds.width() * viewport.scale(),
+                transformedBounds.height() * viewport.scale())
+                .translated(-scaledBackgroundRect.topLeft());
+#endif
+            surfaceShapeDraws.append(draw);
         }
     }
 
