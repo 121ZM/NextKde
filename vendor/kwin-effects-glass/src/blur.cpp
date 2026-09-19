@@ -247,8 +247,12 @@ BlurEffect::BlurEffect()
 #endif
 
 #ifndef GLASS_X11
+    // Reach the display through EffectsHandler rather than the WaylandServer
+    // singleton: waylandDisplay() has been part of the effect API since KWin 5.5,
+    // while the singleton accessor was renamed between 6.6 (WaylandServer::self())
+    // and 6.7 (the waylandServer() free function).
     m_surfaceShapeManager = std::make_unique<SurfaceShapeManager>(
-        waylandServer()->display(), this);
+        effects->waylandDisplay(), this);
     connect(m_surfaceShapeManager.get(), &SurfaceShapeManager::surfaceShapesChanged,
             this, [this](SurfaceInterface *surface) {
         for (EffectWindow *window : effects->stackingOrder()) {
