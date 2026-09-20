@@ -397,12 +397,16 @@ function scheduleSnapshot() {
     snapshotTimer.start();
 }
 
-// Publish at most once per compositor frame while a window is moving. This is
-// a leading/trailing-friendly throttle, not a debounce: repeated geometry
+// Publish at a reduced rate while a window is moving. A drag emits a
+// geometry signal per compositor frame, and every published snapshot runs
+// the bridge's icon-resolution pass plus a full window-model rebuild in
+// Quickshell; 80 ms keeps the Dock auto-hide collision judgement responsive
+// while cutting that work to ~12 snapshots/second. This is a
+// leading/trailing-friendly throttle, not a debounce: repeated geometry
 // signals do not restart the timer, and snapshot() always reads the latest
 // frameGeometry when the timer fires.
 const geometrySnapshotTimer = new QTimer();
-geometrySnapshotTimer.interval = 24;
+geometrySnapshotTimer.interval = 80;
 geometrySnapshotTimer.singleShot = true;
 let geometrySnapshotPending = false;
 geometrySnapshotTimer.timeout.connect(function() {
@@ -614,20 +618,32 @@ function connectDesktopSignals() {
 connectDesktopSignals();
 
 const commandTimer = new QTimer();
-// Commands are UI actions, so 100 ms keeps the Dock responsive while cutting
-// idle D-Bus traffic from 40 polls per second to 10.
-commandTimer.interval = 100;
+// Commands are UI actions, so 50 ms keeps the Dock responsive while still
+// cutting idle D-Bus traffic in half versus the old 25 ms interval.
+commandTimer.interval = 50;
 commandTimer.singleShot = false;
 let commandPollInFlight = false;
+let commandPollWatchdog = 0;
 commandTimer.timeout.connect(function() {
-    if (commandPollInFlight)
+    if (commandPollInFlight) {
+        // If the daemon vanished (restart) the D-Bus callback may never
+        // fire; reset the flag so polling resumes instead of wedging.
+        if (++commandPollWatchdog >= 40) {  // ~2 s at 50 ms
+            commandPollInFlight = false;
+            commandPollWatchdog = 0;
+        }
         return;
+    }
+    commandPollWatchdog = 0;
     commandPollInFlight = true;
     callDBus(service, path, iface, "TakeCommand", function(command) {
         commandPollInFlight = false;
         if (command)
             print("[QuickshellWindowBridge] polling callback received command");
         handleCommand(command);
+        // Drain the queue immediately instead of one command per tick.
+        if (command)
+            commandTimer.restart();
     });
 });
 commandTimer.start();
