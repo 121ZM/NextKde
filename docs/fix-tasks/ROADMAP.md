@@ -86,7 +86,7 @@ liquid-glass 视觉（Dock 已全自绘，先例见 `DockContainer.qml:319`）�
 - 所有轮询 `running` 绑定 `PlatformClient.socket.connected` 等连接状态；
 - `AppMenuService` 500ms 轮询改为活动窗口/菜单变化驱动。
 
-## T6 [ ] 不可见渲染收敛（空闲 CPU/GPU/内存）
+## T6 [x] 不可见渲染收敛（空闲 CPU/GPU/内存）
 
 **范围**：
 - `DockInfoCarousel.qml:128-178` — 4 页按当前页门控 `visible`/Loader，
