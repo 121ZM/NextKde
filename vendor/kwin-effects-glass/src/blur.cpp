@@ -1590,8 +1590,12 @@ void BlurEffect::blur(const RenderTarget &renderTarget, const RenderViewport &vi
     // from the blur region at the top of this function, and neither overriding
     // branch below can have run, because a declared shape set is precisely what
     // this case does not have.
+    //
+    // The Quickshell gate is load-bearing: ordinary blurred windows also publish
+    // a region and declare no shape, and their blur must keep following the
+    // strength kwinrc actually asks for instead of this floor.
     constexpr int kMinimumRegionMaterialLevel = 6;
-    if (surfaceShapeDraws.isEmpty() && !contentShape.isEmpty()) {
+    if (isQuickshellSurface && surfaceShapeDraws.isEmpty() && !contentShape.isEmpty()) {
         SurfaceShapeDraw draw;
         draw.rects = buildEffectiveShape(contentShape);
         if (!draw.rects.isEmpty()) {
@@ -1611,93 +1615,6 @@ void BlurEffect::blur(const RenderTarget &renderTarget, const RenderViewport &vi
                 .translated(-scaledBackgroundRect.topLeft());
 #endif
             surfaceShapeDraws.append(draw);
-        }
-    }
-
-    // Quickshell's RoundedBlurRegion is transported by Wayland as a union of
-    // pixel-aligned rectangles.  Rendering that union directly exposes its
-    // stair-step edge.  For one continuous rounded card, recover the radius
-    // from its top inset, render its complete bounding rectangle, and let the
-    // SDF in onscreen_rounded.glsl provide sub-pixel coverage instead.
-    bool smoothQuickshellCard = false;
-    qreal quickshellCardRadius = 0.0;
-    // The region structure alone (spansFullWidth + continuous centerline)
-    // gives us a reliable corner radius. We use it for the SDF mask even when
-    // the current repaint is a narrow strip (first frame of a new popup),
-    // because falling back to nativeCornerRadius (=0 on these windows) makes
-    // the first frame flash a square slab before the rounded card appears.
-    // Only the full-window replacement (blurring the whole background) is
-    // gated on fullCoverage, to avoid flicker from stale framebuffer content.
-    bool useInferredRadius = false;
-    if (isQuickshellSurface && frameShape.isEmpty()
-        && contentShape.boundingRect() == effectShape.boundingRect()) {
-        const auto bounds = contentShape.boundingRect();
-        const qreal centerX = bounds.x() + bounds.width() * 0.5;
-        qreal topInset = 0.0;
-        bool spansFullWidth = false;
-        std::vector<std::pair<qreal, qreal>> centerIntervals;
-
-        for (const auto &rect : contentShape.rects()) {
-            if (rect.y() == bounds.y()) {
-                topInset = std::max(topInset, qreal(rect.x() - bounds.x()));
-            }
-            if (rect.x() == bounds.x() && rect.width() == bounds.width()) {
-                spansFullWidth = true;
-            }
-            if (rect.x() <= centerX && rect.x() + rect.width() >= centerX) {
-                centerIntervals.emplace_back(rect.y(), rect.y() + rect.height());
-            }
-        }
-
-        // Region rectangles are not ordered by the Wayland protocol.  Merge
-        // their centre-line intervals before deciding whether this is one
-        // continuous card; otherwise a valid rounded card can miss the smooth
-        // path merely because KWin reordered its rectangles.
-        std::sort(centerIntervals.begin(), centerIntervals.end());
-        qreal coveredUntil = bounds.y();
-        for (const auto &[start, end] : centerIntervals) {
-            if (start > coveredUntil) {
-                break;
-            }
-            coveredUntil = std::max(coveredUntil, end);
-        }
-
-        quickshellCardRadius = std::min(topInset, std::min(bounds.width(), bounds.height()) * 0.5);
-        smoothQuickshellCard = spansFullWidth
-            && coveredUntil >= bounds.y() + bounds.height()
-            && quickshellCardRadius >= 1.0;
-        useInferredRadius = smoothQuickshellCard;
-    }
-
-    if (smoothQuickshellCard && surfaceShapeDraws.isEmpty()) {
-        // A narrow repaint (including pointer damage at a card edge) must not
-        // render the entire card: framebuffer[0] is only refreshed for
-        // dirtyRegion below, and sampling the rest can blend stale pixels and
-        // flicker.  However, intersecting the damage with the Wayland blur
-        // region also preserves its pixel-stair-step approximation of the
-        // rounded corners. Use the bounding rectangle clipped to deviceRegion
-        // instead. The SDF in the onscreen shader supplies the exact rounded
-        // coverage, while this geometry still writes only refreshed pixels.
-        BlurRegion smoothCardBounds;
-        smoothCardBounds += backgroundRect;
-        effectiveContentShape = buildEffectiveShape(smoothCardBounds);
-
-        // When the card is fully repainted, use one rectangle rather than the
-        // individual damage rectangles. This is only a geometry simplification;
-        // it does not change which framebuffer pixels are captured.
-        RectF eeBounds;
-        for (const auto &r : effectiveEffectShape) {
-            eeBounds = eeBounds.united(r);
-        }
-        const bool fullCoverage = eeBounds.width() >= scaledBackgroundRect.width() * 0.99
-            && eeBounds.height() >= scaledBackgroundRect.height() * 0.99;
-        if (fullCoverage) {
-            effectiveContentShape.clear();
-#ifdef GLASS_X11
-            effectiveContentShape.append(QRectF(0, 0, scaledBackgroundRect.width(), scaledBackgroundRect.height()));
-#else
-            effectiveContentShape.append(RectF(0, 0, scaledBackgroundRect.width(), scaledBackgroundRect.height()));
-#endif
         }
     }
 
@@ -2053,23 +1970,7 @@ void BlurEffect::blur(const RenderTarget &renderTarget, const RenderViewport &vi
                                  .translated(-scaledBackgroundRect.topLeft());
 #endif
     const BorderRadius nativeCornerRadius = cornerRadius.scaled(viewport.scale()).rounded();
-    // Round the SDF mask with the region-inferred radius whenever the region
-    // structure said "one rounded card", even if this repaint is only a strip
-    // (useInferredRadius). Only the full-window replacement needs
-    // smoothQuickshellCard, whose fullCoverage gate keeps stale framebuffer
-    // content from flickering on the first frame of a popup.
-    const BorderRadius shaderCornerRadius = useInferredRadius
-        ? BorderRadius(quickshellCardRadius * viewport.scale(),
-                       quickshellCardRadius * viewport.scale(),
-                       quickshellCardRadius * viewport.scale(),
-                       quickshellCardRadius * viewport.scale()).rounded()
-        : nativeCornerRadius;
-    const QVector4D shaderBox = smoothQuickshellCard
-        ? QVector4D(scaledBackgroundRect.width() * 0.5,
-                    scaledBackgroundRect.height() * 0.5,
-                    scaledBackgroundRect.width() * 0.5,
-                    scaledBackgroundRect.height() * 0.5)
-        : QVector4D(nativeBox.x() + nativeBox.width() * 0.5,
+    const QVector4D shaderBox = QVector4D(nativeBox.x() + nativeBox.width() * 0.5,
                     nativeBox.y() + nativeBox.height() * 0.5,
                     nativeBox.width() * 0.5,
                     nativeBox.height() * 0.5);
@@ -2086,7 +1987,7 @@ void BlurEffect::blur(const RenderTarget &renderTarget, const RenderViewport &vi
         static_cast<float>(viewport.scale()));
     m_roundedOnscreenPass.shader->setUniform(m_roundedOnscreenPass.offsetLocation, combinedBlurSettings.offset * m_upsampleOffset);
     m_roundedOnscreenPass.shader->setUniform(m_roundedOnscreenPass.boxLocation, shaderBox);
-    m_roundedOnscreenPass.shader->setUniform(m_roundedOnscreenPass.cornerRadiusLocation, shaderCornerRadius.toVector());
+    m_roundedOnscreenPass.shader->setUniform(m_roundedOnscreenPass.cornerRadiusLocation, nativeCornerRadius.toVector());
     m_roundedOnscreenPass.shader->setUniform(m_roundedOnscreenPass.cornerExponentLocation,
         m_settings.roundedCorners.cornerExponent);
     m_roundedOnscreenPass.shader->setUniform(m_roundedOnscreenPass.glassEnabledLocation,
@@ -2137,9 +2038,8 @@ void BlurEffect::blur(const RenderTarget &renderTarget, const RenderViewport &vi
             << "backgroundRect" << backgroundRect
             << "scaledBackgroundRect" << scaledBackgroundRect
             << "shaderBox" << shaderBox
-            << "shaderRadius" << shaderCornerRadius.toVector()
+            << "shaderRadius" << nativeCornerRadius.toVector()
             << "cornerExponent" << m_settings.roundedCorners.cornerExponent
-            << "smoothCard" << smoothQuickshellCard
             << "contentVerts" << contentVertexCount;
         for (const SurfaceShapeDraw &draw : surfaceShapeDraws) {
             QRectF rectBounds;
@@ -2236,7 +2136,7 @@ void BlurEffect::blur(const RenderTarget &renderTarget, const RenderViewport &vi
             } else {
                 m_noisePass.shader->setUniform(m_noisePass.boxLocation, shaderBox);
                 m_noisePass.shader->setUniform(m_noisePass.cornerRadiusLocation,
-                    shaderCornerRadius.toVector());
+                    nativeCornerRadius.toVector());
                 m_noisePass.shader->setUniform(m_noisePass.cornerExponentLocation,
                     m_settings.roundedCorners.cornerExponent);
             }
@@ -2332,7 +2232,7 @@ void BlurEffect::blur(const RenderTarget &renderTarget, const RenderViewport &vi
             m_roundedOnscreenPass.boxLocation, shaderBox);
         m_roundedOnscreenPass.shader->setUniform(
             m_roundedOnscreenPass.cornerRadiusLocation,
-            shaderCornerRadius.toVector());
+            nativeCornerRadius.toVector());
         m_roundedOnscreenPass.shader->setUniform(
             m_roundedOnscreenPass.cornerExponentLocation,
             m_settings.roundedCorners.cornerExponent);
