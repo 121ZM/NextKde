@@ -6,7 +6,7 @@
 2. ☐ `./tools/kosctl build`（或对应子集）构建通过
 3. ☐ QML 改动过 `qmllint-changed.mjs`；契约改动过 `check-docs.py`
 4. ☐ 按任务验收标准做功能/性能验证，记录结果
-5. ☐ **子代理审查通过**，报告存 `reviews/T<n>-review.md`
+5. ☐ **子代理审查通过**
 6. ☐ ROADMAP 状态更新为 `[x]`，独立 commit
 
 ## 分任务验收标准
@@ -18,8 +18,6 @@
   appmenu 全部恢复可用（无 in-flight 卡死）
 - ☑ 请求超时时回调收到失败而非永远悬挂
 - ☑ 正常（daemon 在线）请求路径行为不变
-
-验证记录见 `reviews/T1-review.md`。
 
 ### T2 托盘菜单黑角
 - ☐ 右键托盘图标，菜单四个角**无黑色方块**（圆角处正确透明）
