@@ -32,12 +32,12 @@
 - ☑ 天气失败指数退避 1m→30m（weatherFailStreak），Status/Error 未变跳过 publish
 
 **R4 KWin 动画重绘/网格**
-- ☐ 动画期间不再每帧全屏重绘（改窗口级 repaint）
-- ☐ makeGrid/per-顶点 pow/sin 中 progress 无关量预计算
-- ☐ 动画帧时间下降（KWin 帧计时对比）
+- ☑ 动画期间不再每帧全屏重绘（addAnimationRepaint：expandedGeometry ∪ target + 2px，起始/每帧/结束各一次）
+- ☑ makeGrid/per-顶点 pow/sin 中 progress 无关量预计算（cachedGrid + cachedVertices，按 quad 数/边界/icon 失效）
+- ☐ 动画帧时间下降（KWin 帧计时对比）— 需运行时实测，留待部署后验证
 
 **R5 KWin 析构 UAF**
-- ☐ effect 卸载不再对失效 EffectWindow* 解引用（QPointer 或存活校验）
+- ☑ effect 卸载不再对失效 EffectWindow* 解引用（析构按 stackingOrder 存活校验；死键的 visibleRef 经 placement-new 置空再 erase）
 
 **R6 D-Bus 超时**
 - ☐ PlatformServer.cpp 所有裸 `call()`/`property()` 设 `setTimeout` 或改 async
@@ -140,8 +140,9 @@
 ## 验收记录
 
 | 任务 | 验收日期 | 结果 | 子代理审查结论 | 备注 |
-| 任务 | 验收日期 | 结果 | 子代理审查结论 | 备注 |
 |---|---|---|---|---|
 | R1 | 2026-09-21 | 通过 | code-reviewer PASS（仅 minor：测试注释重复已修） | 分支 fix/2026-09-20-ds-activity-race，commit 6263d74 |
 | R2 | 2026-09-21 | 通过 | code-reviewer PASS（minor：订阅首事件与广播顺序原已不保证，无害） | 分支 fix/2026-09-20-ds-conn-writelock，commit f332bf6 |
 | R3 | 2026-09-21 | 通过 | code-reviewer PASS | 分支 fix/2026-09-20-ds-sampling-slim，commit fcf51e3；snapshot.json 保留（WeatherClient.cpp 离线回退读它） |
+| R4 | 2026-09-21 | 通过 | code-reviewer PASS（minor：bulge 理论上有 ≤2px 出包络的残影风险，被 opacity/边距覆盖，可接受） | 分支 fix/2026-09-20-kwin-dockanim-repaint，commit 29174e0；帧计时改善待部署后实测 |
+| R5 | 2026-09-21 | 通过 | code-reviewer PASS | 分支 fix/2026-09-20-kwin-dockanim-uaf，commit 96d7e1e |
