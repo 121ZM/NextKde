@@ -123,12 +123,34 @@ DockWindowAnimationEffect::DockWindowAnimationEffect()
 DockWindowAnimationEffect::~DockWindowAnimationEffect()
 {
     QDBusConnection::sessionBus().unregisterObject(QString::fromLatin1(dbusPath));
+    // When the effect is unloaded, KWin may already have deleted windows that
+    // still key these tables (windowDeleted is not guaranteed to have reached
+    // us first). Deleted windows are gone from the stacking order, so only a
+    // key that is still listed there may be dereferenced.
+    const QList<EffectWindow *> liveWindows =
+        effects ? effects->stackingOrder() : QList<EffectWindow *>();
     const auto animatedWindows = m_animations.keys();
-    for (EffectWindow *window : animatedWindows)
-        finishAnimation(window);
+    for (EffectWindow *window : animatedWindows) {
+        if (liveWindows.contains(window))
+            finishAnimation(window);
+    }
+    // Entries left in m_animations belong to windows that are already gone.
+    // They cannot be erased as-is: WindowAnimation::visibleRef stores a raw
+    // EffectWindow* and ~EffectWindowVisibleRef() would call unrefVisible()
+    // on the freed window. Replace the ref with an empty one first —
+    // placement new ends the old object's lifetime without running its
+    // destructor, which is exactly the dereference to avoid.
+    for (auto it = m_animations.begin(); it != m_animations.end();) {
+        new (&it.value().visibleRef) EffectWindowVisibleRef();
+        it = m_animations.erase(it);
+    }
     const auto windows = m_claimedRoles.keys();
-    for (EffectWindow *window : windows)
-        releaseClaim(window);
+    for (EffectWindow *window : windows) {
+        if (liveWindows.contains(window))
+            releaseClaim(window);
+        else
+            m_claimedRoles.remove(window);
+    }
 }
 
 bool DockWindowAnimationEffect::supported()
