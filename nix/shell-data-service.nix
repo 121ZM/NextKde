@@ -28,8 +28,10 @@ let
 
   patched-service = runCommand "kos-data.service" { } ''
     mkdir -p $out/lib/systemd/user
-    sed 's|%h/.local/libexec/kos-data-service|${go-service}/libexec/kos-data-service|g' \
-      ${src}/packaging/systemd/kos-data.service \
+    # The template lives next to the service it starts; packaging/ used to
+    # carry a second copy that drifted from this one.
+    sed 's|@CMAKE_INSTALL_FULL_LIBEXECDIR@|${go-service}/libexec|g' \
+      ${src}/services/data-service/systemd/kos-data.service.in \
       > $out/lib/systemd/user/kos-data.service
   '';
 in
