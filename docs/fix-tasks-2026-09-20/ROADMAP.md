@@ -16,10 +16,10 @@
 | R3 [x] | 一 | data-service 采样/persist 瘦身（df→statfs 等） | `services/data-service/main.go`,`weather.go` | R1,R2 | A |
 | R4 [x] | 一 | KWin dock-animation 全屏重绘 + 每帧网格 | `integrations/kwin/dock-window-animation/*` | — | B |
 | R5 [x] | 一 | KWin dock-animation 析构 UAF | `integrations/kwin/dock-window-animation/*` | R4(同文件) | B |
-| R6 | 一 | daemon 裸 D-Bus call 加超时 | `platform/src/daemon/PlatformServer.cpp` | — | C |
-| R7 | 一 | daemon file.copy 挪出事件循环 | `platform/src/daemon/PlatformServer.cpp` | R6(同文件) | C |
-| R8 | 一 | daemon network.refresh 异步化 | `platform/src/daemon/PlatformServer.cpp` | R6,R7 | C |
-| R9 | 一 | daemon socket 读缓冲上限 + 游标 | `platform/src/daemon/PlatformServer.cpp` | R6–R8 | C |
+| R6 [x] | 一 | daemon 裸 D-Bus call 加超时 | `platform/src/daemon/PlatformServer.cpp` | — | C |
+| R7 [x] | 一 | daemon file.copy 挪出事件循环 | `platform/src/daemon/PlatformServer.cpp` | R6(同文件) | C |
+| R8 [x] | 一 | daemon network.refresh 异步化 | `platform/src/daemon/PlatformServer.cpp` | R6,R7 | C |
+| R9 [x] | 一 | daemon socket 读缓冲上限 + 游标 | `platform/src/daemon/PlatformServer.cpp` | R6–R8 | C |
 | R10 | 二 | daemon 提供 `state.read/write`/`settings.launch`/`notify` 等 op | `PlatformServer.cpp`,`platform.v1.md` | R6–R9 | D |
 | R11 | 二 | 收敛 18 处 `sh -c` 配置写 → state op | 8 个 `*ConfigService.qml` | R10 | E |
 | R12 | 二 | 收敛 qdbus6/notify-send/sh-c 启动器 | `ControlCenterService`,`DesktopAppLauncher`,`TrayNotificationBridge`,`DeskCenterWindow` | R10 | E |

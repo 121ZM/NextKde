@@ -40,18 +40,18 @@
 - ☑ effect 卸载不再对失效 EffectWindow* 解引用（析构按 stackingOrder 存活校验；死键的 visibleRef 经 placement-new 置空再 erase）
 
 **R6 D-Bus 超时**
-- ☐ PlatformServer.cpp 所有裸 `call()`/`property()` 设 `setTimeout` 或改 async
-- ☐ appmenu/KWin 慢响应不再冻结 daemon 25s
+- ☑ PlatformServer.cpp 所有裸 `call()`/`property()` 设 `setTimeout` 或改 async（39 处全部审计：sync→2s 超时；appmenu.active/layout→asyncCall+watcher；reconfigure*→fire-and-forget asyncCall；isServiceRegistered→NameHasOwner 有界 helper）
+- ☑ appmenu/KWin 慢响应不再冻结 daemon 25s（最慢路径已异步化，其余上限 2s）
 
 **R7 file.copy 异步**
-- ☐ 大文件复制期间 daemon 仍响应其它请求（clipboard/brightness）
-- ☐ 用 QtConcurrent/KIO FileCopyJob，带进度或完成回调
+- ☑ 大文件复制期间 daemon 仍响应其它请求（拷贝挪到 m_copyPool 2 线程，QFutureWatcher 回主线程 respond）
+- ☑ 用 QtConcurrent/KIO FileCopyJob，带进度或完成回调（QtConcurrent::run + QFutureWatcher，同路径校验保持同步前置）
 
 **R8 network.refresh 异步**
-- ☐ N+1 同步 GetAll 改 asyncCall 链/worker，单次刷新不阻塞事件循环
+- ☑ N+1 同步 GetAll 改 asyncCall 链/worker，单次刷新不阻塞事件循环（m_dbusPool worker + connectToBus 命名连接 RAII，watchPaths/prefill/completeInFlight 主线程收尾）
 
 **R9 socket 读缓冲**
-- ☐ 缓冲有上限（如 1MiB）超限断开；逐行不再 O(n²) memmove
+- ☑ 缓冲有上限（1 MiB 超限回 request-too-large 并断开）；游标解析 + 单次尾部压缩，逐行 O(n²) memmove 消除
 
 ### 阶段二 · daemon 能力 + 红线收敛
 
@@ -146,3 +146,7 @@
 | R3 | 2026-09-21 | 通过 | code-reviewer PASS | 分支 fix/2026-09-20-ds-sampling-slim，commit fcf51e3；snapshot.json 保留（WeatherClient.cpp 离线回退读它） |
 | R4 | 2026-09-21 | 通过 | code-reviewer PASS（minor：bulge 理论上有 ≤2px 出包络的残影风险，被 opacity/边距覆盖，可接受） | 分支 fix/2026-09-20-kwin-dockanim-repaint，commit 29174e0；帧计时改善待部署后实测 |
 | R5 | 2026-09-21 | 通过 | code-reviewer PASS | 分支 fix/2026-09-20-kwin-dockanim-uaf，commit 96d7e1e |
+| R6 | 2026-09-21 | 通过 | code-reviewer PASS（1 条 low：portal asyncCall 未限时——已补 setTimeout） | 分支 fix/2026-09-20-daemon-dbus-timeout，commit 449dca8 |
+| R7 | 2026-09-21 | 通过 | code-reviewer PASS（low 残余：硬链接同 inode 拷贝不防，预存在） | 分支 fix/2026-09-20-daemon-filecopy-async，commit 6ec1a98 |
+| R8 | 2026-09-21 | 通过 | code-reviewer PASS | 分支 fix/2026-09-20-daemon-netrefresh-async，commit 337b655 |
+| R9 | 2026-09-21 | 通过 | code-reviewer PASS | 分支 fix/2026-09-20-daemon-readbuf-cap，commit 88aa71e |
