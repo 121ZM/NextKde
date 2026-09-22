@@ -9,6 +9,7 @@
 #include <QRectF>
 #include <QString>
 #include <QStringList>
+#include <QVector>
 
 namespace KWin
 {
@@ -85,6 +86,30 @@ private:
         Transition transition = Transition::Minimize;
         // CSD 客户端自绘阴影缓冲区相对于窗口 frameGeometry 的物理偏移量
         QPointF csdOffset = QPointF(0, 0);
+
+        // Progress-independent per-vertex constants for the genie mesh.
+        struct VertexConstants {
+            qreal delay = 0.0;
+            qreal phaseDenom = 1.0;
+            qreal roundedX = 0.0;
+            qreal roundedY = 0.0;
+            qreal sinPiV = 0.0;
+            qreal originalX = 0.0;
+            qreal originalY = 0.0;
+        };
+        // Cache of the makeGrid(40) subdivision, the source quad bounds and
+        // the per-vertex constants above. KWin rebuilds the incoming quad
+        // list every frame but it is stable for a redirected window, so the
+        // cache is rebuilt only when the quad count or the edge quad bounds
+        // change (e.g. a resize mid-animation) or the morph target moves.
+        // cachedQuadCount == -1 means uninitialised.
+        int cachedQuadCount = -1;
+        QRectF cachedFirstQuadBounds;
+        QRectF cachedLastQuadBounds;
+        QRectF cachedSourceBounds;
+        QRectF cachedIcon;
+        WindowQuadList cachedGrid;
+        QVector<VertexConstants> cachedVertices;
     };
 
     struct PendingLaunch {
@@ -106,9 +131,11 @@ private:
     void finishAnimation(EffectWindow *window);
     void startAnimation(EffectWindow *window, const Target &target,
                         Transition transition);
-    void applyDockMorph(EffectWindow *window, const WindowAnimation &animation,
+    void addAnimationRepaint(EffectWindow *window,
+                             const QRectF &targetGeometry);
+    void applyDockMorph(EffectWindow *window, WindowAnimation &animation,
                         WindowQuadList &quads) const;
-    void applyBottomGenie(EffectWindow *window, const WindowAnimation &animation,
+    void applyBottomGenie(EffectWindow *window, WindowAnimation &animation,
                           WindowQuadList &quads) const;
     std::optional<Target> targetForWindow(EffectWindow *window) const;
     std::optional<Target> takePendingLaunchForWindow(EffectWindow *window);

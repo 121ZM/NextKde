@@ -91,9 +91,8 @@ stdenv.mkDerivation {
     # The whole tree, not just controls/: apps/settings is a separate process and
     # resolves `import "../../shared/qml/<dir>"` against its own installed
     # location, so controls/ alone leaves the colorize/ import unresolvable and
-    # the window dies in QQmlApplicationEngine before it is ever shown. Mirrors
-    # the shared/qml install rule in the top-level CMakeLists.txt, which excludes
-    # the same two patterns.
+    # the window dies in QQmlApplicationEngine before it is ever shown. Build
+    # files and tests must never reach the installed tree.
     mkdir -p $out/share/shared/qml
     cp -r shared/qml/. $out/share/shared/qml/
     find $out/share/shared/qml -maxdepth 1 \

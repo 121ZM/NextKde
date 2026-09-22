@@ -42,7 +42,8 @@ liquid-glass 视觉（Dock 已全自绘，先例见 `DockContainer.qml:319`）�
 备选方案（不执行，留档）：
 - A. Quickshell 补丁：`display()` 中 `createWinId()` 前 `ensurePolished()`，
   `PlatformMenuQMenu` 构造时 `setAttribute(Qt::WA_TranslucentBackground)`；
-  补丁接入 `tools/build-quickshell-0.3.sh`。若 B 遇到 `QsMenuHandle` 能力
+  补丁接入 quickshell 0.3 编译流程（原 `tools/build-quickshell-0.3.sh` 已删，
+  需从源码重建编译环境）。若 B 遇到 `QsMenuHandle` 能力
   缺口（图标、勾选态、radio 分组）无法解决再回退此方案。
 - C. 临时规避：`QT_STYLE_OVERRIDE=Fusion`（仅验证用，不提交）。
 

@@ -123,12 +123,34 @@ DockWindowAnimationEffect::DockWindowAnimationEffect()
 DockWindowAnimationEffect::~DockWindowAnimationEffect()
 {
     QDBusConnection::sessionBus().unregisterObject(QString::fromLatin1(dbusPath));
+    // When the effect is unloaded, KWin may already have deleted windows that
+    // still key these tables (windowDeleted is not guaranteed to have reached
+    // us first). Deleted windows are gone from the stacking order, so only a
+    // key that is still listed there may be dereferenced.
+    const QList<EffectWindow *> liveWindows =
+        effects ? effects->stackingOrder() : QList<EffectWindow *>();
     const auto animatedWindows = m_animations.keys();
-    for (EffectWindow *window : animatedWindows)
-        finishAnimation(window);
+    for (EffectWindow *window : animatedWindows) {
+        if (liveWindows.contains(window))
+            finishAnimation(window);
+    }
+    // Entries left in m_animations belong to windows that are already gone.
+    // They cannot be erased as-is: WindowAnimation::visibleRef stores a raw
+    // EffectWindow* and ~EffectWindowVisibleRef() would call unrefVisible()
+    // on the freed window. Replace the ref with an empty one first —
+    // placement new ends the old object's lifetime without running its
+    // destructor, which is exactly the dereference to avoid.
+    for (auto it = m_animations.begin(); it != m_animations.end();) {
+        new (&it.value().visibleRef) EffectWindowVisibleRef();
+        it = m_animations.erase(it);
+    }
     const auto windows = m_claimedRoles.keys();
-    for (EffectWindow *window : windows)
-        releaseClaim(window);
+    for (EffectWindow *window : windows) {
+        if (liveWindows.contains(window))
+            releaseClaim(window);
+        else
+            m_claimedRoles.remove(window);
+    }
 }
 
 bool DockWindowAnimationEffect::supported()
@@ -504,7 +526,25 @@ void DockWindowAnimationEffect::startAnimation(EffectWindow *window,
         << "csdOffset" << animation.csdOffset;
 
     redirect(window);
-    effects->addRepaintFull();
+    // Repaint only the motion envelope (frame + shadow margins united with the
+    // dock-icon target rect) instead of the whole screen for the first
+    // transformed frame. Both rects live in global logical coordinates.
+    addAnimationRepaint(window, animation.target.geometry);
+}
+
+void DockWindowAnimationEffect::addAnimationRepaint(
+    EffectWindow *window, const QRectF &targetGeometry)
+{
+    // expandedGeometry() covers the frame plus shadow margins; the morph
+    // target is the dock-icon rect the window deforms into. The animation
+    // only ever draws inside the union of the two, so repaint that union
+    // (with a 2px safety margin) rather than the entire screen.
+    if (!window)
+        return;
+    const QRectF region = QRectF(window->expandedGeometry())
+        .united(targetGeometry).adjusted(-2, -2, 2, 2);
+    effects->addRepaint(qFloor(region.x()), qFloor(region.y()),
+                        qCeil(region.width()), qCeil(region.height()));
 }
 
 void DockWindowAnimationEffect::drawWindow(
@@ -542,17 +582,34 @@ void DockWindowAnimationEffect::drawWindow(
 }
 
 void DockWindowAnimationEffect::applyDockMorph(
-    EffectWindow *window, const WindowAnimation &animation,
+    EffectWindow *window, WindowAnimation &animation,
     WindowQuadList &quads) const
 {
     const QRectF geometry = window->frameGeometry();
     const QRectF target = animation.target.geometry;
     const qreal progress = animation.timeLine.value();
 
-    QRectF sourceBounds;
-    for (const WindowQuad &quad : std::as_const(quads))
-        sourceBounds = sourceBounds.isNull()
-            ? QRectF(quad.bounds()) : sourceBounds.united(QRectF(quad.bounds()));
+    // Cache the source quad bounds: the quad list is stable for a redirected
+    // window, so rescanning every vertex each frame is wasted work. The edge
+    // quad bounds act as a cheap validity key in case the window resizes
+    // mid-animation.
+    const QRectF firstBounds = quads.isEmpty()
+        ? QRectF() : QRectF(quads.constFirst().bounds());
+    const QRectF lastBounds = quads.isEmpty()
+        ? QRectF() : QRectF(quads.constLast().bounds());
+    if (animation.cachedQuadCount != quads.count()
+            || animation.cachedFirstQuadBounds != firstBounds
+            || animation.cachedLastQuadBounds != lastBounds) {
+        animation.cachedQuadCount = quads.count();
+        animation.cachedFirstQuadBounds = firstBounds;
+        animation.cachedLastQuadBounds = lastBounds;
+        animation.cachedSourceBounds = QRectF();
+        for (const WindowQuad &quad : std::as_const(quads))
+            animation.cachedSourceBounds = animation.cachedSourceBounds.isNull()
+                ? QRectF(quad.bounds())
+                : animation.cachedSourceBounds.united(QRectF(quad.bounds()));
+    }
+    const QRectF sourceBounds = animation.cachedSourceBounds;
     if (sourceBounds.width() <= 0.0 || sourceBounds.height() <= 0.0)
         return;
 
@@ -587,7 +644,7 @@ void DockWindowAnimationEffect::applyDockMorph(
 }
 
 void DockWindowAnimationEffect::applyBottomGenie(
-    EffectWindow *window, const WindowAnimation &animation,
+    EffectWindow *window, WindowAnimation &animation,
     WindowQuadList &quads) const
 {
     const QRectF geometry = window->frameGeometry();
@@ -599,45 +656,85 @@ void DockWindowAnimationEffect::applyBottomGenie(
     // KWin's redirected window texture can include client decoration or
     // shadow margins. Measure the actual quad bounds before making the grid,
     // so position normalization is identical for CSD Electron windows and
-    // standard KDE-decorated windows.
-    QRectF sourceBounds;
-    for (const WindowQuad &quad : std::as_const(quads))
-        sourceBounds = sourceBounds.isNull()
-            ? QRectF(quad.bounds()) : sourceBounds.united(QRectF(quad.bounds()));
+    // standard KDE-decorated windows. The quad list is stable for a
+    // redirected window, so the makeGrid(40) subdivision, the source bounds
+    // and every progress-independent per-vertex constant are cached on the
+    // animation and only rebuilt when the quad count, the edge quad bounds
+    // or the icon rect change (e.g. a resize mid-animation or a moved dock).
+    const QRectF firstBounds = quads.isEmpty()
+        ? QRectF() : QRectF(quads.constFirst().bounds());
+    const QRectF lastBounds = quads.isEmpty()
+        ? QRectF() : QRectF(quads.constLast().bounds());
+    if (animation.cachedQuadCount != quads.count()
+            || animation.cachedFirstQuadBounds != firstBounds
+            || animation.cachedLastQuadBounds != lastBounds
+            || animation.cachedIcon != icon) {
+        animation.cachedQuadCount = quads.count();
+        animation.cachedFirstQuadBounds = firstBounds;
+        animation.cachedLastQuadBounds = lastBounds;
+        animation.cachedIcon = icon;
+        animation.cachedSourceBounds = QRectF();
+        for (const WindowQuad &quad : std::as_const(quads))
+            animation.cachedSourceBounds = animation.cachedSourceBounds.isNull()
+                ? QRectF(quad.bounds())
+                : animation.cachedSourceBounds.united(QRectF(quad.bounds()));
+        animation.cachedGrid = quads.makeGrid(40);
+        animation.cachedVertices.clear();
+        animation.cachedVertices.reserve(
+            animation.cachedGrid.count() * 4);
+        const QRectF &sourceBounds = animation.cachedSourceBounds;
+        if (sourceBounds.width() > 0.0 && sourceBounds.height() > 0.0) {
+            for (const WindowQuad &quad : std::as_const(animation.cachedGrid)) {
+                for (int index = 0; index < 4; ++index) {
+                    WindowAnimation::VertexConstants constants;
+                    constants.originalX = quad[index].x();
+                    constants.originalY = quad[index].y();
+                    // WindowVertex::u/v are texture coordinates, not a reliable
+                    // normalized location in the window. Derive mesh coordinates
+                    // from positions so shadow/CSD quads and high-DPI textures
+                    // cannot clamp whole rows or columns to one edge.
+                    const qreal u = std::clamp(
+                        (constants.originalX - sourceBounds.left())
+                            / sourceBounds.width(), 0.0, 1.0);
+                    const qreal v = std::clamp(
+                        (constants.originalY - sourceBounds.top())
+                            / sourceBounds.height(), 0.0, 1.0);
+                    constants.delay = (1.0 - v) * 0.36;
+                    constants.phaseDenom = std::max(0.001, 1.0 - constants.delay);
+                    const QPointF rounded = roundedRectCoordinate(
+                        u, v, icon.size(), 0.30, 0.20);
+                    constants.roundedX = rounded.x();
+                    constants.roundedY = rounded.y();
+                    constants.sinPiV = std::sin(
+                        std::numbers::pi_v<qreal> * v);
+                    animation.cachedVertices.append(constants);
+                }
+            }
+        }
+    }
+    const QRectF sourceBounds = animation.cachedSourceBounds;
     if (sourceBounds.width() <= 0.0 || sourceBounds.height() <= 0.0)
         return;
 
     // Lower rows arrive first while upper rows lag. The endpoint uses a 30%
     // top radius and a 20% bottom radius, both measured from the shorter side.
-    quads = quads.makeGrid(40);
+    quads = animation.cachedGrid;
+    qsizetype vertexIndex = 0;
     for (WindowQuad &quad : quads) {
-        for (int index = 0; index < 4; ++index) {
-            const qreal originalX = quad[index].x();
-            const qreal originalY = quad[index].y();
-            // WindowVertex::u/v are texture coordinates, not a reliable
-            // normalized location in the window. Derive mesh coordinates from
-            // positions so shadow/CSD quads and high-DPI textures cannot clamp
-            // whole rows or columns to one edge.
-            const qreal u = std::clamp(
-                (originalX - sourceBounds.left()) / sourceBounds.width(),
-                0.0, 1.0);
-            const qreal v = std::clamp(
-                (originalY - sourceBounds.top()) / sourceBounds.height(),
-                0.0, 1.0);
-            const qreal delay = (1.0 - v) * 0.36;
+        for (int index = 0; index < 4; ++index, ++vertexIndex) {
+            const WindowAnimation::VertexConstants &constants
+                = animation.cachedVertices.at(vertexIndex);
             const qreal phase = std::clamp(
-                (motionProgress - delay) / std::max(0.001, 1.0 - delay),
+                (motionProgress - constants.delay) / constants.phaseDenom,
                 0.0, 1.0);
             const qreal verticalProgress = smoothStep(phase);
             const qreal horizontalProgress = 1.0
                 - std::pow(1.0 - verticalProgress, 2.05);
-            const QPointF rounded = roundedRectCoordinate(
-                u, v, icon.size(), 0.30, 0.20);
             const qreal targetX = icon.x() - geometry.x()
-                + icon.width() * rounded.x();
+                + icon.width() * constants.roundedX;
             const qreal targetY = icon.y() - geometry.y()
-                + icon.height() * rounded.y();
-            qreal currentX = std::lerp(originalX, targetX,
+                + icon.height() * constants.roundedY;
+            qreal currentX = std::lerp(constants.originalX, targetX,
                                        horizontalProgress);
 
             // Give the middle of the drop a small outward belly. Scaling each
@@ -647,11 +744,11 @@ void DockWindowAnimationEffect::applyBottomGenie(
                 icon.center().x() - geometry.x(), horizontalProgress);
             const qreal outwardBulge = 0.12 * std::sin(
                 std::numbers::pi_v<qreal> * verticalProgress)
-                * std::sin(std::numbers::pi_v<qreal> * v);
+                * constants.sinPiV;
             currentX = rowCenterX
                 + (currentX - rowCenterX) * (1.0 + outwardBulge);
             quad[index].setX(currentX);
-            quad[index].setY(std::lerp(originalY, targetY,
+            quad[index].setY(std::lerp(constants.originalY, targetY,
                                        verticalProgress));
         }
     }
@@ -662,8 +759,8 @@ void DockWindowAnimationEffect::apply(EffectWindow *window, int mask,
                                        WindowQuadList &quads)
 {
     Q_UNUSED(mask)
-    const auto it = m_animations.constFind(window);
-    if (it == m_animations.cend())
+    auto it = m_animations.find(window);
+    if (it == m_animations.end())
         return;
 
     // Compensate a CSD shadow offset only on axes whose complete quad bounds
@@ -766,17 +863,26 @@ void DockWindowAnimationEffect::prePaintWindow(RenderView *view,
 
 void DockWindowAnimationEffect::postPaintScreen()
 {
-    const bool wasActive = !m_animations.isEmpty();
     const auto windows = m_animations.keys();
     for (EffectWindow *window : windows) {
         const auto it = m_animations.constFind(window);
-        if (it != m_animations.cend() && it->timeLine.done())
+        if (it == m_animations.cend())
+            continue;
+        // The animation only ever draws inside the union of the window's
+        // expanded geometry (frame + shadow margins) and the dock-icon
+        // target rect, so repaint that envelope instead of the full screen
+        // for every frame of the animation.
+        const QRectF targetGeometry = it->target.geometry;
+        addAnimationRepaint(window, targetGeometry);
+        if (it->timeLine.done()) {
             finishAnimation(window);
+            // Repaint the envelope once more after the final frame so the
+            // redirected texture cannot remain as a stale compositor image.
+            // The target rect was captured above because finishAnimation
+            // erases the entry from m_animations.
+            addAnimationRepaint(window, targetGeometry);
+        }
     }
-    // Repaint once more after the final frame so the redirected texture cannot
-    // remain as a stale compositor image.
-    if (wasActive)
-        effects->addRepaintFull();
     effects->postPaintScreen();
 }
 
