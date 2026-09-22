@@ -70,9 +70,14 @@ QtObject {
     property var _queue: []
     // requestId -> { callbacks: [...], enqueuedAt: epoch ms, sentAt: epoch ms
     // (0 while queued), dedupKey: string, timeoutMs: int }
-    property var _pending: ({})
+    // Both tables are `Map`s, never plain objects grown with computed keys —
+    // same reasoning as DataClient. These two are the tables the shell actually
+    // crashed in: the crash dump shows the dying write was
+    // `_queuedByKey["network.refresh {}"] = requestId`, reached from
+    // Object::internalPut via Runtime::StoreElement with a NULL member array.
+    property var _pending: new Map()
     // dedupKey -> requestId, for queued idempotent reads only.
-    property var _queuedByKey: ({})
+    property var _queuedByKey: new Map()
     property int _nextRequestId: 1
     signal eventReceived(string eventName, var payload)
     signal transportChanged(bool connected)
@@ -124,7 +129,7 @@ QtObject {
             timeoutMs: timeoutOverride !== undefined
                 ? Number(timeoutOverride) : requestTimeoutMs
         }
-        _pending[requestId] = entry
+        _pending.set(requestId, entry)
 
         if (isRead) {
             // Only the newest queued read for the same operation+payload
@@ -132,15 +137,15 @@ QtObject {
             // bookkeeping still resolves.
             const dedupKey = op + " " + JSON.stringify(payload || ({}))
             entry.dedupKey = dedupKey
-            const previousId = _queuedByKey[dedupKey]
+            const previousId = _queuedByKey.get(dedupKey)
             if (previousId !== undefined) {
-                const previous = _pending[previousId]
+                const previous = _pending.get(previousId)
                 if (previous)
                     entry.callbacks = previous.callbacks.concat(entry.callbacks)
-                delete _pending[previousId]
+                _pending.delete(previousId)
                 _dropQueued(previousId)
             }
-            _queuedByKey[dedupKey] = requestId
+            _queuedByKey.set(dedupKey, requestId)
         }
 
         _queue.push({ version: protocolVersion, requestId: requestId,
@@ -184,25 +189,25 @@ QtObject {
     // next event turn: this runs inside request(), so a synchronous callback
     // would break the callers' assumption that request() returns first.
     function _failRequestLater(requestId, code, message) {
-        const entry = _pending[requestId]
+        const entry = _pending.get(requestId)
         if (entry === undefined)
             return
-        delete _pending[requestId]
+        _pending.delete(requestId)
         _dropQueued(requestId)
-        if (entry.dedupKey && _queuedByKey[entry.dedupKey] === requestId)
-            delete _queuedByKey[entry.dedupKey]
+        if (entry.dedupKey && _queuedByKey.get(entry.dedupKey) === requestId)
+            _queuedByKey.delete(entry.dedupKey)
         const response = _failure(requestId, code, message)
         Qt.callLater(function() { _invokeCallbacks(entry, response) })
     }
 
     function _failRequest(requestId, code, message) {
-        const entry = _pending[requestId]
+        const entry = _pending.get(requestId)
         if (entry === undefined)
             return
-        delete _pending[requestId]
+        _pending.delete(requestId)
         _dropQueued(requestId)
-        if (entry.dedupKey && _queuedByKey[entry.dedupKey] === requestId)
-            delete _queuedByKey[entry.dedupKey]
+        if (entry.dedupKey && _queuedByKey.get(entry.dedupKey) === requestId)
+            _queuedByKey.delete(entry.dedupKey)
         _invokeCallbacks(entry, _failure(requestId, code, message))
     }
 
@@ -210,11 +215,11 @@ QtObject {
     // issue a fresh request, which must land in the post-disconnect queue.
     function _failAll(code, message) {
         const pending = _pending
-        _pending = ({})
+        _pending = new Map()
         _queue = []
-        _queuedByKey = ({})
-        for (const requestId in pending)
-            _invokeCallbacks(pending[requestId],
+        _queuedByKey = new Map()
+        for (const requestId of pending.keys())
+            _invokeCallbacks(pending.get(requestId),
                 _failure(requestId, code, message))
     }
 
@@ -224,8 +229,8 @@ QtObject {
     function _expireRequests() {
         const now = Date.now()
         const expired = []
-        for (const requestId in _pending) {
-            const entry = _pending[requestId]
+        for (const requestId of _pending.keys()) {
+            const entry = _pending.get(requestId)
             if (!entry || entry.timeoutMs <= 0)
                 continue
             const since = entry.sentAt > 0 ? entry.sentAt : entry.enqueuedAt
@@ -241,12 +246,12 @@ QtObject {
             return
         while (_queue.length > 0) {
             const message = _queue.shift()
-            const entry = _pending[message.requestId]
+            const entry = _pending.get(message.requestId)
             if (entry) {
                 entry.sentAt = Date.now()
                 if (entry.dedupKey
-                        && _queuedByKey[entry.dedupKey] === message.requestId)
-                    delete _queuedByKey[entry.dedupKey]
+                        && _queuedByKey.get(entry.dedupKey) === message.requestId)
+                    _queuedByKey.delete(entry.dedupKey)
             }
             socket.write(JSON.stringify(message) + "\n")
         }
@@ -266,10 +271,10 @@ QtObject {
             return
         }
         const requestId = String(message.requestId || "")
-        if (!requestId || _pending[requestId] === undefined)
+        if (!requestId || !_pending.has(requestId))
             return
-        const entry = _pending[requestId]
-        delete _pending[requestId]
+        const entry = _pending.get(requestId)
+        _pending.delete(requestId)
         _invokeCallbacks(entry, message)
     }
 
