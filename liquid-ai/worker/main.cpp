@@ -1,4 +1,5 @@
 #include <LiquidAI/DepthGenerator.h>
+#include <LiquidAI/SpatialAssetGenerator.h>
 
 #include <QCoreApplication>
 #include <QJsonDocument>
@@ -80,6 +81,15 @@ QByteArray handleRequest(const QByteArray &line, LiquidAI::DepthGenerator &gener
                              QString::fromStdString(result.error), false);
     }
 
+    LiquidAI::SpatialAssetResult scene;
+    if (request.value(QStringLiteral("prepareSpatial")).toBool(false)) {
+        LiquidAI::SpatialAssetGenerator sceneGenerator;
+        scene = sceneGenerator.generate(pathFromQString(imagePath),
+                                        result.depthPath);
+        if (!scene.success)
+            std::cerr << "[spatial-assets] " << scene.error << '\n';
+    }
+
     return QJsonDocument(QJsonObject{
         {QStringLiteral("version"), 1},
         {QStringLiteral("requestId"), requestId},
@@ -92,6 +102,15 @@ QByteArray handleRequest(const QByteArray &line, LiquidAI::DepthGenerator &gener
             {QStringLiteral("model"), QStringLiteral("depth-anything-v2-small-vits-onnx-v1")},
             {QStringLiteral("contract"),
              QString::fromLatin1(LiquidAI::DepthGenerator::contractVersion)},
+            {QStringLiteral("backgroundPath"), scene.success
+                ? pathToQString(scene.backgroundPath) : QString()},
+            {QStringLiteral("mattePath"), scene.success
+                ? pathToQString(scene.mattePath) : QString()},
+            {QStringLiteral("influencePath"), scene.success
+                ? pathToQString(scene.influencePath) : QString()},
+            {QStringLiteral("spatialContract"), scene.success
+                ? QString::fromLatin1(LiquidAI::SpatialAssetGenerator::contractVersion)
+                : QString()},
         }},
     }).toJson(QJsonDocument::Compact);
 }

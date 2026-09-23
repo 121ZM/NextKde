@@ -2,8 +2,8 @@ import QtQuick
 import qs.desktop.modules.deskcenter
 import qs.desktop.modules.common
 
-// GPU-only parallax pass. This item owns no inference or persistence logic;
-// its inputs are the current wallpaper and a cached 16-bit depth PNG.
+// GPU-only wallpaper presentation. The worker prepares optional layered
+// assets; this item falls back to the depth shader when they are unavailable.
 Item {
     id: root
 
@@ -34,6 +34,11 @@ Item {
     readonly property vector2d cropScale: Qt.vector2d(
         Math.min(1, outputAspect / sourceAspect),
         Math.min(1, sourceAspect / outputAspect))
+    readonly property bool layeredTexturesReady:
+        SpatialWallpaperService.layeredReady
+        && backgroundImage.status === Image.Ready
+        && matteImage.status === Image.Ready
+        && influenceImage.status === Image.Ready
 
     onActiveChanged: console.log("[DepthWallpaperLayer] active=" + active
         + " output=" + (targetScreen ? targetScreen.name : "none"))
@@ -69,16 +74,75 @@ Item {
         }
     }
 
+    Image {
+        id: backgroundImage
+        anchors.fill: parent
+        visible: false
+        source: root.active && SpatialWallpaperService.layeredReady
+            ? SpatialWallpaperService.backgroundPath : ""
+        sourceSize: root.textureSize
+        asynchronous: true
+        cache: true
+        onStatusChanged: {
+            if (status === Image.Error)
+                console.warn("[DepthWallpaperLayer] background failed: " + source)
+        }
+    }
+
+    Image {
+        id: matteImage
+        anchors.fill: parent
+        visible: false
+        source: root.active && SpatialWallpaperService.layeredReady
+            ? SpatialWallpaperService.mattePath : ""
+        sourceSize: root.textureSize
+        asynchronous: true
+        cache: true
+        onStatusChanged: {
+            if (status === Image.Error)
+                console.warn("[DepthWallpaperLayer] matte failed: " + source)
+        }
+    }
+
+    Image {
+        id: influenceImage
+        anchors.fill: parent
+        visible: false
+        source: root.active && SpatialWallpaperService.layeredReady
+            ? SpatialWallpaperService.influencePath : ""
+        sourceSize: root.textureSize
+        asynchronous: true
+        cache: true
+        onStatusChanged: {
+            if (status === Image.Error)
+                console.warn("[DepthWallpaperLayer] influence failed: " + source)
+        }
+    }
+
     ShaderEffect {
         anchors.fill: parent
         visible: root.active && sourceImage.status === Image.Ready
-            && depthImage.status === Image.Ready
+            && depthImage.status === Image.Ready && !root.layeredTexturesReady
         property variant source: sourceImage
         property variant depthMap: depthImage
         property vector2d pointer: Qt.vector2d(root.renderedPointerX,
             root.renderedPointerY)
         property vector2d cropScale: root.cropScale
         fragmentShader: Qt.resolvedUrl("../../shaders/depth_parallax.frag.qsb")
+    }
+
+    ShaderEffect {
+        anchors.fill: parent
+        visible: root.active && sourceImage.status === Image.Ready
+            && root.layeredTexturesReady
+        property variant source: sourceImage
+        property variant background: backgroundImage
+        property variant matte: matteImage
+        property variant influence: influenceImage
+        property vector2d pointer: Qt.vector2d(root.renderedPointerX,
+            root.renderedPointerY)
+        property vector2d cropScale: root.cropScale
+        fragmentShader: Qt.resolvedUrl("../../shaders/layered_wallpaper.frag.qsb")
     }
 
 }

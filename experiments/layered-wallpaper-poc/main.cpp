@@ -344,9 +344,45 @@ cv::Mat renderFrame(const cv::Mat &background, const cv::Mat &foreground,
 
 int main(int argc, char **argv)
 {
+    if (argc == 7 && std::string(argv[1]) == "assets") {
+        try {
+            const cv::Mat original = cv::imread(argv[2], cv::IMREAD_COLOR);
+            const cv::Mat originalBackground = cv::imread(argv[3], cv::IMREAD_COLOR);
+            const cv::Mat originalMatte = cv::imread(argv[4], cv::IMREAD_GRAYSCALE);
+            const cv::Mat originalInfluence = cv::imread(argv[5], cv::IMREAD_GRAYSCALE);
+            if (original.empty() || originalBackground.empty()
+                || originalMatte.empty() || originalInfluence.empty()
+                || originalBackground.size() != originalMatte.size()
+                || originalBackground.size() != originalInfluence.size())
+                throw std::runtime_error("cached scene assets are incomplete");
+            const cv::Mat photo = resizedToWidth(original, kWorkWidth);
+            const cv::Mat background = resizedToWidth(originalBackground, kWorkWidth);
+            const cv::Mat matte = resizedToWidth(originalMatte, kWorkWidth);
+            const cv::Mat influence = resizedToWidth(originalInfluence, kWorkWidth);
+            const cv::Mat noOcclusion(photo.size(), CV_8UC1, cv::Scalar(0));
+            const Motion motion{-0.005, 0.020, 0.010, 0.050};
+            const fs::path outputDirectory = argv[6];
+            fs::create_directories(outputDirectory);
+            for (const auto &frame : {std::pair{"left", -1.0},
+                                      std::pair{"center", 0.0},
+                                      std::pair{"right", 1.0}}) {
+                const cv::Mat preview = renderFrame(background, photo, matte,
+                    influence, noOcclusion, frame.second, motion);
+                cv::imwrite((outputDirectory / (std::string(frame.first)
+                            + ".jpg")).string(), preview,
+                            {cv::IMWRITE_JPEG_QUALITY, 92});
+            }
+            std::cout << "wrote cached scene preview to " << outputDirectory << '\n';
+            return 0;
+        } catch (const std::exception &error) {
+            std::cerr << "cached scene preview failed: " << error.what() << '\n';
+            return 1;
+        }
+    }
     if (argc != 5 || (std::string(argv[1]) != "raccoon"
                       && std::string(argv[1]) != "ironman")) {
-        std::cerr << "usage: layered-wallpaper-poc raccoon|ironman IMAGE DEPTH_PNG OUTPUT_DIR\n";
+        std::cerr << "usage: layered-wallpaper-poc raccoon|ironman IMAGE DEPTH_PNG OUTPUT_DIR\n"
+                     "       layered-wallpaper-poc assets IMAGE BACKGROUND MATTE INFLUENCE OUTPUT_DIR\n";
         return 2;
     }
     try {

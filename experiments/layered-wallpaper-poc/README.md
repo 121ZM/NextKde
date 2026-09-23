@@ -16,6 +16,7 @@ No Quickshell or platform code loads these artifacts.
 cmake -S experiments/layered-wallpaper-poc -B .build/layered-wallpaper-poc
 cmake --build .build/layered-wallpaper-poc -j2
 .build/layered-wallpaper-poc/layered-wallpaper-poc raccoon|ironman IMAGE DEPTH_PNG OUTPUT_DIR
+.build/layered-wallpaper-poc/layered-wallpaper-poc assets IMAGE BACKGROUND MATTE INFLUENCE OUTPUT_DIR
 ```
 
 Outputs are `foreground.png`, `background.png`, `mask.png`, `hand-mask.png`,

@@ -7,8 +7,10 @@ find_library(ONNXRUNTIME_LIBRARY NAMES onnxruntime REQUIRED)
 add_library(liquid-ai STATIC
     include/LiquidAI/DepthGenerator.h
     include/LiquidAI/ModelManager.h
+    include/LiquidAI/SpatialAssetGenerator.h
     src/DepthGenerator.cpp
     src/ModelManager.cpp
+    src/SpatialAssetGenerator.cpp
 )
 target_include_directories(liquid-ai
     PUBLIC include

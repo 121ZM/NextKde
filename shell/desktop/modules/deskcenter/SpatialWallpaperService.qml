@@ -6,12 +6,15 @@ import "../../../Kos/Ui"
 
 // Opt-in orchestration for the desktop wallpaper pipeline. The generator and
 // model live in the platform's child process; this service only tracks which
-// wallpaper is current and publishes a ready depth-map path to the renderer.
+// wallpaper is current and publishes cached paths to the renderer.
 QtObject {
     id: root
 
     property string imagePath: ""
     property string depthPath: ""
+    property string backgroundPath: ""
+    property string mattePath: ""
+    property string influencePath: ""
     property string requestedPath: ""
     property bool requestInFlight: false
     property int retryCount: 0
@@ -20,6 +23,8 @@ QtObject {
     readonly property url wallpaperUrl: WallpaperColorSource.wallpaperUrl
     readonly property bool ready: enabled && depthPath.length > 0
         && imagePath === currentImagePath()
+    readonly property bool layeredReady: ready && backgroundPath.length > 0
+        && mattePath.length > 0 && influencePath.length > 0
 
     function currentImagePath() {
         const value = wallpaperUrl.toString()
@@ -40,6 +45,9 @@ QtObject {
         if (nextPath !== imagePath) {
             imagePath = nextPath
             depthPath = ""
+            backgroundPath = ""
+            mattePath = ""
+            influencePath = ""
             errorMessage = ""
             retryCount = 0
             retryTimer.stop()
@@ -84,6 +92,9 @@ QtObject {
                 root.requestDelay.stop()
                 root.retryTimer.stop()
                 root.depthPath = ""
+                root.backgroundPath = ""
+                root.mattePath = ""
+                root.influencePath = ""
                 root.errorMessage = ""
             }
         }
@@ -91,7 +102,9 @@ QtObject {
 
     property Connections generationReplies: Connections {
         target: DepthManager
-        function onFinished(sourcePath, resultPath) {
+        function onFinished(sourcePath, resultPath, width, height, cached,
+                            model, contract, backgroundPath, mattePath,
+                            influencePath) {
             if (!root.requestInFlight || sourcePath !== root.requestedPath)
                 return
             root.requestInFlight = false
@@ -99,6 +112,9 @@ QtObject {
                 root.retryCount = 0
                 root.errorMessage = ""
                 root.depthPath = resultPath
+                root.backgroundPath = backgroundPath
+                root.mattePath = mattePath
+                root.influencePath = influencePath
                 console.log("[SpatialWallpaper] depth ready for " + sourcePath)
             } else if (root.enabled)
                 root.requestDelay.restart()
