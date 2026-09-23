@@ -61,6 +61,7 @@ stdenv.mkDerivation {
     # --- Binaries ---
     mkdir -p $out/libexec
     ln -s ${kos-platform}/libexec/kos-platform $out/libexec/kos-platform
+    ln -s ${kos-platform}/libexec/kos-ai-worker $out/libexec/kos-ai-worker
     ln -s ${shell-data-service}/libexec/kos-data-service $out/libexec/kos-data-service
 
     mkdir -p $out/bin
