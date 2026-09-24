@@ -39,9 +39,30 @@ Item {
         && backgroundImage.status === Image.Ready
         && matteImage.status === Image.Ready
         && influenceImage.status === Image.Ready
+    readonly property bool meshRendererAvailable: meshRenderer.item !== null
+        && meshRenderer.item.ready
+
+    function syncMeshRenderer() {
+        if (!meshRenderer.item)
+            return
+        meshRenderer.item.wallpaperPath = SpatialWallpaperService.wallpaperUrl
+        meshRenderer.item.depthPath = SpatialWallpaperService.depthPath
+        meshRenderer.item.backgroundPath = SpatialWallpaperService.layeredReady
+            ? SpatialWallpaperService.backgroundPath : ""
+        meshRenderer.item.mattePath = SpatialWallpaperService.layeredReady
+            ? SpatialWallpaperService.mattePath : ""
+        meshRenderer.item.pointerX = renderedPointerX
+        meshRenderer.item.pointerY = renderedPointerY
+        meshRenderer.item.outputAspect = outputAspect
+    }
 
     onActiveChanged: console.log("[DepthWallpaperLayer] active=" + active
         + " output=" + (targetScreen ? targetScreen.name : "none"))
+    onMeshRendererAvailableChanged: {
+        if (active)
+            console.log("[DepthWallpaperLayer] renderer="
+                + (meshRendererAvailable ? "3D mesh" : "shader fallback"))
+    }
 
     Image {
         id: sourceImage
@@ -119,9 +140,21 @@ Item {
         }
     }
 
+    // Loaded only when depth assets are ready. If the optional Qt Quick 3D
+    // runtime/plugin is unavailable, Loader falls back to the shader paths.
+    Loader {
+        id: meshRenderer
+        anchors.fill: parent
+        active: root.active && root.layeredTexturesReady
+        source: Qt.resolvedUrl("DepthWallpaper3D.qml")
+        onLoaded: root.syncMeshRenderer()
+        onStatusChanged: if (status === Loader.Error)
+            console.warn("[DepthWallpaperLayer] 3D renderer unavailable; using shader fallback")
+    }
+
     ShaderEffect {
         anchors.fill: parent
-        visible: root.active && sourceImage.status === Image.Ready
+        visible: !root.meshRendererAvailable && root.active && sourceImage.status === Image.Ready
             && depthImage.status === Image.Ready && !root.layeredTexturesReady
         property variant source: sourceImage
         property variant depthMap: depthImage
@@ -133,16 +166,28 @@ Item {
 
     ShaderEffect {
         anchors.fill: parent
-        visible: root.active && sourceImage.status === Image.Ready
+        visible: !root.meshRendererAvailable && root.active && sourceImage.status === Image.Ready
             && root.layeredTexturesReady
         property variant source: sourceImage
         property variant background: backgroundImage
         property variant matte: matteImage
         property variant influence: influenceImage
+        property variant depthMap: depthImage
         property vector2d pointer: Qt.vector2d(root.renderedPointerX,
             root.renderedPointerY)
         property vector2d cropScale: root.cropScale
         fragmentShader: Qt.resolvedUrl("../../shaders/layered_wallpaper.frag.qsb")
+    }
+
+    onRenderedPointerXChanged: syncMeshRenderer()
+    onRenderedPointerYChanged: syncMeshRenderer()
+    onOutputAspectChanged: syncMeshRenderer()
+    Connections {
+        target: SpatialWallpaperService
+        function onDepthPathChanged() { root.syncMeshRenderer() }
+        function onBackgroundPathChanged() { root.syncMeshRenderer() }
+        function onMattePathChanged() { root.syncMeshRenderer() }
+        function onWallpaperUrlChanged() { root.syncMeshRenderer() }
     }
 
 }

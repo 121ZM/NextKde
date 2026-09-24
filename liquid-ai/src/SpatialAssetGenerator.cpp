@@ -1,5 +1,7 @@
 #include <LiquidAI/SpatialAssetGenerator.h>
 
+#include "ForegroundSegmenter.h"
+
 #include <QDateTime>
 #include <QDir>
 #include <QFile>
@@ -13,6 +15,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <utility>
 #include <vector>
 
 namespace fs = std::filesystem;
@@ -57,13 +60,16 @@ bool writePng(const fs::path &path, const cv::Mat &image)
         && file.commit();
 }
 
-bool writeMetadata(const fs::path &path, int width, int height)
+bool writeMetadata(const fs::path &path, int width, int height,
+                   bool modelSegmentation)
 {
     const QJsonObject object{
         {QStringLiteral("contract"),
          QString::fromLatin1(LiquidAI::SpatialAssetGenerator::contractVersion)},
         {QStringLiteral("width"), width},
         {QStringLiteral("height"), height},
+        {QStringLiteral("segmentation"), modelSegmentation
+            ? QStringLiteral("isnet-general-use") : QStringLiteral("depth-fallback")},
         {QStringLiteral("created"), QDateTime::currentDateTimeUtc().toString(Qt::ISODate)},
     };
     const QByteArray bytes = QJsonDocument(object).toJson(QJsonDocument::Compact);
@@ -73,7 +79,7 @@ bool writeMetadata(const fs::path &path, int width, int height)
 }
 
 cv::Mat largestComponent(const cv::Mat &binary, double minimumFraction,
-                         double maximumFraction)
+                         double maximumFraction, bool allowBottom = false)
 {
     cv::Mat labels, stats, centroids;
     const int count = cv::connectedComponentsWithStats(binary, labels, stats,
@@ -89,12 +95,39 @@ cv::Mat largestComponent(const cv::Mat &binary, double minimumFraction,
         const int right = left + stats.at<int>(index, cv::CC_STAT_WIDTH);
         const int bottom = top + stats.at<int>(index, cv::CC_STAT_HEIGHT);
         if (left < 2 || top < 2 || right > binary.cols - 2
-            || bottom > binary.rows - 2)
+            || (!allowBottom && bottom > binary.rows - 2))
             continue;
         if (!selected || area > stats.at<int>(selected, cv::CC_STAT_AREA))
             selected = index;
     }
     return selected ? labels == selected : cv::Mat{};
+}
+
+void fillEnclosedHoles(cv::Mat &mask)
+{
+    if (mask.empty())
+        return;
+    // Narrow gaps between petals can leave an opaque center connected to the
+    // exterior through the matte. Close small boundary gaps first, then fill
+    // only enclosed regions; large holes remain untouched.
+    const int diameter = std::clamp(static_cast<int>(std::lround(
+        std::min(mask.cols, mask.rows) * 0.025)), 9, 41) | 1;
+    cv::Mat closed;
+    cv::morphologyEx(mask, closed, cv::MORPH_CLOSE,
+        cv::getStructuringElement(cv::MORPH_ELLIPSE,
+                                  cv::Size(diameter, diameter)));
+    cv::Mat exterior = closed.clone();
+    cv::floodFill(exterior, cv::Point(0, 0), cv::Scalar(255));
+    cv::Mat holes;
+    cv::bitwise_not(exterior, holes);
+    cv::Mat labels, stats, centroids;
+    const int count = cv::connectedComponentsWithStats(
+        holes, labels, stats, centroids, 8);
+    const int maximumHoleArea = static_cast<int>(mask.total() * 0.025);
+    for (int index = 1; index < count; ++index) {
+        if (stats.at<int>(index, cv::CC_STAT_AREA) <= maximumHoleArea)
+            mask.setTo(255, labels == index);
+    }
 }
 
 cv::Mat foregroundMask(const cv::Mat &photo, const cv::Mat &depth)
@@ -127,15 +160,103 @@ cv::Mat foregroundMask(const cv::Mat &photo, const cv::Mat &depth)
     cv::morphologyEx(binary, binary, cv::MORPH_CLOSE,
                      cv::getStructuringElement(cv::MORPH_ELLIPSE,
                                                cv::Size(3, 3)));
+    fillEnclosedHoles(binary);
+    return binary;
+}
+
+// A close subject can leave the bottom of a photograph. Find a compact,
+// central depth island above the ground, then let GrabCut extend it downwards.
+// The side and top borders remain hard background to avoid selecting a field.
+cv::Mat bottomEdgeForegroundMask(const cv::Mat &photo, const cv::Mat &depth)
+{
+    const int width = photo.cols;
+    const int height = photo.rows;
+    cv::Mat high = depth > static_cast<ushort>(0.58 * 65535);
+    high.rowRange(static_cast<int>(height * 0.78), height).setTo(0);
+    high.colRange(0, static_cast<int>(width * 0.12)).setTo(0);
+    high.colRange(static_cast<int>(width * 0.88), width).setTo(0);
+    cv::Mat seed = largestComponent(high, 0.004, 0.22);
+    if (seed.empty())
+        return {};
+
+    const cv::Rect seedBox = cv::boundingRect(seed);
+    // A stronger depth island can cover only part of a wide subject (flower
+    // petals), while a broad fixed corridor can join a second subject through
+    // nearby grass. Expand the seed at a lower depth threshold and size the
+    // GrabCut search from that connected foreground island.
+    cv::Mat expanded = depth > static_cast<ushort>(0.50 * 65535);
+    expanded.rowRange(static_cast<int>(height * 0.78), height).setTo(0);
+    expanded.colRange(0, static_cast<int>(width * 0.12)).setTo(0);
+    expanded.colRange(static_cast<int>(width * 0.88), width).setTo(0);
+    expanded = largestComponent(expanded, 0.004, 0.45, true);
+    cv::Rect searchBox = seedBox;
+    if (!expanded.empty()) {
+        cv::Mat overlap;
+        cv::bitwise_and(expanded, seed, overlap);
+        const cv::Rect box = cv::boundingRect(expanded);
+        if (cv::countNonZero(overlap) >= cv::countNonZero(seed) * 0.8
+            && box.width < width * 0.75)
+            searchBox = box;
+        else
+            expanded.release();
+    }
+    const int horizontalMargin = std::max(static_cast<int>(width * 0.025),
+                                           static_cast<int>(searchBox.width * 0.12));
+    const int left = std::max(2, searchBox.x - horizontalMargin);
+    const int right = std::min(width - 2,
+                               searchBox.x + searchBox.width + horizontalMargin);
+    const int top = std::max(2, searchBox.y - searchBox.height / 6);
+    if (right - left < width * 0.08 || top > height * 0.62)
+        return {};
+
+    cv::Mat labels(photo.size(), CV_8U, cv::Scalar(cv::GC_BGD));
+    const cv::Rect corridor(left, top, right - left, height - top);
+    labels(corridor).setTo(cv::GC_PR_BGD);
+    cv::Mat likely = depth > static_cast<ushort>(0.48 * 65535);
+    if (!expanded.empty())
+        cv::bitwise_and(likely, expanded, likely);
+    likely.colRange(0, left).setTo(0);
+    likely.colRange(right, width).setTo(0);
+    likely.rowRange(0, top).setTo(0);
+    labels.setTo(cv::GC_PR_FGD, likely);
+    cv::erode(seed, seed,
+              cv::getStructuringElement(cv::MORPH_ELLIPSE, cv::Size(11, 11)));
+    labels.setTo(cv::GC_FGD, seed);
+    cv::Mat backgroundModel, foregroundModel;
+    cv::grabCut(photo, labels, cv::Rect(), backgroundModel, foregroundModel,
+                4, cv::GC_INIT_WITH_MASK);
+    cv::Mat binary = (labels == cv::GC_FGD) | (labels == cv::GC_PR_FGD);
+    cv::Mat nearSubject = depth > static_cast<ushort>(0.45 * 65535);
+    cv::bitwise_and(binary, nearSubject, binary);
+    binary = largestComponent(binary, 0.015, 0.35, true);
+    if (binary.empty())
+        return {};
+    cv::Mat overlap;
+    cv::bitwise_and(binary, seed, overlap);
+    if (cv::countNonZero(overlap) < cv::countNonZero(seed) * 0.9)
+        return {};
+    const cv::Rect box = cv::boundingRect(binary);
+    if (box.width > width * 0.65 || box.y > height * 0.5)
+        return {};
+    cv::morphologyEx(binary, binary, cv::MORPH_CLOSE,
+                     cv::getStructuringElement(cv::MORPH_ELLIPSE,
+                                               cv::Size(11, 11)));
+    fillEnclosedHoles(binary);
     return binary;
 }
 
 cv::Mat extendedBackground(const cv::Mat &photo, const cv::Mat &subject)
 {
     cv::Mat hidden;
+    // The background plane travels farther than the foreground. Extend the
+    // reconstruction beyond the maximum expected sampling offset so the
+    // original subject cannot reappear as a ghost silhouette during motion.
+    const int fillRadius = std::max(12, static_cast<int>(std::lround(
+        std::min(photo.cols, photo.rows) * 0.012)));
+    const int fillDiameter = fillRadius * 2 + 1;
     cv::dilate(subject, hidden,
                cv::getStructuringElement(cv::MORPH_ELLIPSE,
-                                         cv::Size(41, 41)));
+                                         cv::Size(fillDiameter, fillDiameter)));
     cv::Mat distance, labels;
     cv::distanceTransform(hidden, distance, labels, cv::DIST_L2,
                           5, cv::DIST_LABEL_PIXEL);
@@ -160,13 +281,20 @@ cv::Mat extendedBackground(const cv::Mat &photo, const cv::Mat &subject)
             if (!hiddenRow[x])
                 continue;
             const cv::Point point = nearest.at(labelRow[x]);
-            if (point.x >= 0)
+            if (point.x < 0)
+                continue;
+            const cv::Point reflected(2 * point.x - x, 2 * point.y - y);
+            if (reflected.x >= 0 && reflected.x < photo.cols
+                && reflected.y >= 0 && reflected.y < photo.rows
+                && !hidden.at<uchar>(reflected))
+                row[x] = photo.at<cv::Vec3b>(reflected);
+            else
                 row[x] = photo.at<cv::Vec3b>(point);
         }
     }
     cv::Mat softened, softMask;
-    cv::GaussianBlur(filled, softened, cv::Size(), 18.0);
-    cv::GaussianBlur(hidden, softMask, cv::Size(), 12.0);
+    cv::GaussianBlur(filled, softened, cv::Size(), 2.0);
+    cv::GaussianBlur(hidden, softMask, cv::Size(), 1.4);
     cv::Mat originalFloat, softenedFloat, alphaFloat, alpha3;
     photo.convertTo(originalFloat, CV_32FC3, 1.0 / 255.0);
     softened.convertTo(softenedFloat, CV_32FC3, 1.0 / 255.0);
@@ -201,7 +329,7 @@ SpatialAssetResult SpatialAssetGenerator::generate(const fs::path &imagePath,
 {
     SpatialAssetResult result;
     try {
-        const fs::path directory = depthPath.parent_path() / "spatial-v2";
+        const fs::path directory = depthPath.parent_path() / "spatial-v3";
         result.backgroundPath = directory / "background.png";
         result.mattePath = directory / "matte.png";
         result.influencePath = directory / "influence.png";
@@ -228,6 +356,8 @@ SpatialAssetResult SpatialAssetGenerator::generate(const fs::path &imagePath,
                 metadataFile.readAll()).object();
             if (metadata.value(QStringLiteral("contract")).toString()
                     == QString::fromLatin1(contractVersion)
+                && metadata.value(QStringLiteral("segmentation")).toString()
+                    == QStringLiteral("isnet-general-use")
                 && metadata.value(QStringLiteral("width")).toInt() == width
                 && metadata.value(QStringLiteral("height")).toInt() == height
                 && decode(result.backgroundPath, cv::IMREAD_COLOR).size()
@@ -251,20 +381,87 @@ SpatialAssetResult SpatialAssetGenerator::generate(const fs::path &imagePath,
             photo = source;
             depth = sourceDepth;
         }
-        const cv::Mat mask = foregroundMask(photo, depth);
+        cv::Mat mask;
+        cv::Mat depthSupport;
+        bool modelSegmentation = false;
+        static ForegroundSegmenter segmenter;
+        std::string segmentError;
+        cv::Mat modelAlpha = segmenter.segment(photo, &segmentError);
+        if (!modelAlpha.empty()) {
+            cv::Mat proposed = modelAlpha > 64;
+            proposed = largestComponent(proposed, 0.005, 0.60, true);
+            if (!proposed.empty()) {
+                cv::Mat strongDepth = depth > static_cast<ushort>(0.58 * 65535);
+                strongDepth.rowRange(static_cast<int>(height * 0.78), height)
+                    .setTo(0);
+                strongDepth.colRange(0, static_cast<int>(width * 0.12))
+                    .setTo(0);
+                strongDepth.colRange(static_cast<int>(width * 0.88), width)
+                    .setTo(0);
+                strongDepth = largestComponent(strongDepth, 0.004, 0.22);
+                cv::Mat overlap;
+                if (!strongDepth.empty())
+                    cv::bitwise_and(strongDepth, proposed, overlap);
+                if (!strongDepth.empty() && cv::countNonZero(overlap)
+                        >= cv::countNonZero(strongDepth) * 0.55) {
+                    mask = proposed;
+                    // Depth-guided GrabCut can recover holes in a salient
+                    // matte (bright palms and dark flower centers), but only
+                    // next to pixels already selected by the model. Do not
+                    // grow into a separate person or nearby ground.
+                    cv::Mat depthMask = foregroundMask(photo, depth);
+                    if (depthMask.empty())
+                        depthMask = bottomEdgeForegroundMask(photo, depth);
+                    if (!depthMask.empty()) {
+                        cv::Mat vicinity, support;
+                        cv::dilate(mask, vicinity,
+                            cv::getStructuringElement(cv::MORPH_ELLIPSE,
+                                                      cv::Size(31, 31)));
+                        cv::bitwise_and(depthMask, vicinity, support);
+                        cv::bitwise_or(mask, support, mask);
+                        depthSupport = std::move(support);
+                    }
+                    fillEnclosedHoles(mask);
+                    modelSegmentation = true;
+                }
+            }
+        }
+        if (mask.empty())
+            mask = foregroundMask(photo, depth);
+        if (mask.empty())
+            mask = bottomEdgeForegroundMask(photo, depth);
         if (mask.empty()) {
             result.error = "未找到适合分层的独立前景";
             return result;
         }
         cv::Mat alpha;
-        cv::GaussianBlur(mask, alpha, cv::Size(), 1.1);
+        if (modelSegmentation) {
+            // Preserve IS-Net's soft confidence along hair and grass edges.
+            // The previous binary threshold discarded it and a later blur
+            // could only create a broad halo, not restore the lost contour.
+            cv::Mat allowed;
+            cv::dilate(mask, allowed,
+                cv::getStructuringElement(cv::MORPH_ELLIPSE,
+                                          cv::Size(17, 17)));
+            alpha = cv::Mat::zeros(modelAlpha.size(), CV_8UC1);
+            modelAlpha.copyTo(alpha, allowed);
+            if (!depthSupport.empty())
+                alpha.setTo(255, depthSupport);
+            cv::GaussianBlur(alpha, alpha, cv::Size(), 0.7);
+        } else {
+            cv::Mat matteCore;
+            cv::erode(mask, matteCore,
+                cv::getStructuringElement(cv::MORPH_ELLIPSE,
+                                          cv::Size(3, 3)));
+            cv::GaussianBlur(matteCore, alpha, cv::Size(), 0.9);
+        }
         const cv::Mat background = extendedBackground(photo, mask);
         const cv::Mat influence = handInfluence(depth, mask);
         if (!QDir().mkpath(toQString(directory))
             || !writePng(result.backgroundPath, background)
             || !writePng(result.mattePath, alpha)
             || !writePng(result.influencePath, influence)
-            || !writeMetadata(metadataPath, width, height)) {
+            || !writeMetadata(metadataPath, width, height, modelSegmentation)) {
             result.error = "无法写入空间壁纸缓存";
             return result;
         }

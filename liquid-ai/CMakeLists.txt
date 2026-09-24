@@ -9,6 +9,8 @@ add_library(liquid-ai STATIC
     include/LiquidAI/ModelManager.h
     include/LiquidAI/SpatialAssetGenerator.h
     src/DepthGenerator.cpp
+    src/ForegroundSegmenter.h
+    src/ForegroundSegmenter.cpp
     src/ModelManager.cpp
     src/SpatialAssetGenerator.cpp
 )

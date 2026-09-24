@@ -48,29 +48,26 @@ bool hashFile(const QString &path, QByteArray *digest)
     return true;
 }
 
-} // namespace
-
-namespace LiquidAI {
-
-bool ModelManager::ensureDepthAnythingV2Small(std::filesystem::path *path,
-                                             std::string *error) const
+bool ensureVerifiedModel(const QString &fileName, const char *expectedSha256,
+                         const char *downloadUrl, std::filesystem::path *path,
+                         std::string *error, int timeoutMs)
 {
     const QString directory = modelCacheDirectory();
     if (directory.isEmpty() || !QDir().mkpath(directory)) {
         *error = "无法创建模型缓存目录";
         return false;
     }
-    const QString destination = directory + QStringLiteral("/depth-anything-v2-small-vits.onnx");
+    const QString destination = directory + QLatin1Char('/') + fileName;
     QByteArray digest;
     if (QFileInfo(destination).isFile() && hashFile(destination, &digest)
-        && digest == QByteArray(modelSha256)) {
+        && digest == QByteArray(expectedSha256)) {
         *path = toPath(destination);
         return true;
     }
 
     QFile::remove(destination);
     QNetworkAccessManager network;
-    QNetworkRequest request{QUrl(QString::fromLatin1(modelUrl))};
+    QNetworkRequest request{QUrl(QString::fromLatin1(downloadUrl))};
     request.setAttribute(QNetworkRequest::RedirectPolicyAttribute,
                          QNetworkRequest::NoLessSafeRedirectPolicy);
     QNetworkReply *reply = network.get(request);
@@ -82,10 +79,11 @@ bool ModelManager::ensureDepthAnythingV2Small(std::filesystem::path *path,
         return false;
     }
 
+    constexpr qint64 maximumModelBytes = 200LL * 1024 * 1024;
     bool tooLarge = false;
     QObject::connect(reply, &QIODevice::readyRead, reply, [&] {
         const QByteArray chunk = reply->readAll();
-        if (output.size() + chunk.size() > 200LL * 1024 * 1024) {
+        if (output.size() + chunk.size() > maximumModelBytes) {
             tooLarge = true;
             reply->abort();
             return;
@@ -97,30 +95,30 @@ bool ModelManager::ensureDepthAnythingV2Small(std::filesystem::path *path,
     QObject::connect(reply, &QNetworkReply::finished, &loop, &QEventLoop::quit);
     QTimer timeout;
     timeout.setSingleShot(true);
-    timeout.setInterval(180000);
+    timeout.setInterval(timeoutMs);
     QObject::connect(&timeout, &QTimer::timeout, reply, &QNetworkReply::abort);
     timeout.start();
     loop.exec();
 
     const QByteArray tail = reply->readAll();
-    if (!tail.isEmpty() && output.size() + tail.size() <= 200LL * 1024 * 1024)
+    if (!tail.isEmpty() && output.size() + tail.size() <= maximumModelBytes)
         output.write(tail);
     const auto status = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
     const auto networkError = reply->error();
     const QString networkMessage = reply->errorString();
     reply->deleteLater();
-    if (tooLarge || output.size() > 200LL * 1024 * 1024) {
+    if (tooLarge || output.size() > maximumModelBytes) {
         output.cancelWriting();
         *error = "模型文件超过大小上限";
         return false;
     }
     if (networkError != QNetworkReply::NoError || status < 200 || status >= 300) {
         output.cancelWriting();
-        *error = ("模型下载失败：" + networkMessage.toStdString());
+        *error = "模型下载失败：" + networkMessage.toStdString();
         return false;
     }
     if (!output.commit() || !hashFile(destination + QStringLiteral(".download"), &digest)
-        || digest != QByteArray(modelSha256)) {
+        || digest != QByteArray(expectedSha256)) {
         QFile::remove(destination + QStringLiteral(".download"));
         *error = "模型 SHA256 校验失败";
         return false;
@@ -132,6 +130,25 @@ bool ModelManager::ensureDepthAnythingV2Small(std::filesystem::path *path,
     }
     *path = toPath(destination);
     return true;
+}
+
+} // namespace
+
+namespace LiquidAI {
+
+bool ModelManager::ensureDepthAnythingV2Small(std::filesystem::path *path,
+                                             std::string *error) const
+{
+    return ensureVerifiedModel(QStringLiteral("depth-anything-v2-small-vits.onnx"),
+                               modelSha256, modelUrl, path, error, 180000);
+}
+
+bool ModelManager::ensureForegroundIsNet(std::filesystem::path *path,
+                                         std::string *error) const
+{
+    return ensureVerifiedModel(QStringLiteral("isnet-general-use.onnx"),
+                               foregroundModelSha256, foregroundModelUrl,
+                               path, error, 60000);
 }
 
 } // namespace LiquidAI
