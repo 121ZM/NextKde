@@ -27,6 +27,9 @@ QtObject {
 
     readonly property url wallpaperUrl: config.image || WallpaperColorSource.wallpaperUrl
     readonly property bool takeoverEnabled: config.takeoverEnabled
+    readonly property bool takeoverAvailable:
+        PlatformClient.supports("wallpaper.plasma.proxy")
+        && PlatformClient.supports("wallpaper.plasma.restore")
     readonly property string fitMode: config.fitMode
     readonly property string transition: config.transition
     readonly property bool slideshowEnabled: config.slideshowEnabled
@@ -94,6 +97,12 @@ QtObject {
     function setTakeoverEnabled(enabled) {
         if (takeoverPending)
             return false
+        if (!takeoverAvailable) {
+            errorMessage = PlatformClient.capabilityProbeComplete
+                ? "当前平台服务版本不支持壁纸接管"
+                : "平台服务尚未准备好"
+            return false
+        }
         if (enabled) {
             config.takeoverEnabled = true
             config.sync()
@@ -111,7 +120,7 @@ QtObject {
     }
 
     function restorePlasmaImage() {
-        if (!restoreRequested || proxyPending)
+        if (!restoreRequested || proxyPending || !takeoverAvailable)
             return
         restoreRequested = false
         const imagePath = localPath(config.image)
@@ -148,7 +157,8 @@ QtObject {
 
     function applyPlasmaBackdropIfReady() {
         if (!takeoverEnabled || takeoverPending || !allOutputsReady()
-                || !WallpaperColorSource.ready || proxyPending)
+                || !WallpaperColorSource.ready || proxyPending
+                || !takeoverAvailable)
             return
         const color = WallpaperColorSource.primary.toString()
         const accent = color.length === 9 && color.startsWith("#")
@@ -278,6 +288,14 @@ QtObject {
     property Connections screenChanges: Connections {
         target: ScreenLifecycle
         function onUsableScreensChanged() { service.applyPlasmaBackdropIfReady() }
+    }
+
+    property Connections platformCapabilities: Connections {
+        target: PlatformClient
+        function onCapabilitiesChanged() {
+            if (service.takeoverAvailable)
+                service.applyPlasmaBackdropIfReady()
+        }
     }
 
     onWallpaperUrlChanged: {

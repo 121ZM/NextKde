@@ -8,6 +8,7 @@ function fixture() {
     const calls = [], commits = [];
     const state = {
         active: false, pending: false, presented: false, previousDesktop: false,
+        available: true,
         image: '', images: [], errorMessage: '', remainingSeconds: 60,
         direction: 1, restoring: false, generation: 0, readyOutputs: [], abortPending: false,
         ScreenLifecycle: { usableScreens: [{ name: "HDMI-1" }] },
@@ -18,7 +19,11 @@ function fixture() {
             chooseImage(path) { commits.push(path); return true; },
         },
         AppearanceConfigService: { updateSpatialWallpaperEnabled() {} },
-        PlatformClient: { request(op, payload, callback) { calls.push({ op, payload, callback }); } },
+        PlatformClient: {
+            capabilityProbeComplete: true,
+            supports: op => op === "wallpaper.preview.desktop",
+            request(op, payload, callback) { calls.push({ op, payload, callback }); }
+        },
     };
     state.service = state;
     vm.createContext(state);
@@ -80,5 +85,12 @@ function fixture() {
     calls[0].callback({ ok: true, result: { previous: false } });
     state.finish(false);
     calls[1].callback({ ok: true });
+}
+{
+    const { state, calls } = fixture();
+    state.available = false;
+    assert.equal(state.begin('/one.jpg', '[]'), false);
+    assert.equal(calls.length, 0);
+    assert.match(state.errorMessage, /不支持/);
 }
 console.log('wallpaper preview rollback contracts: passed');

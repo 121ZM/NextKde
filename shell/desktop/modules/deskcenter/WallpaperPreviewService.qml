@@ -22,8 +22,16 @@ QtObject {
     property int generation: 0
     property var readyOutputs: []
     property bool abortPending: false
+    readonly property bool available:
+        PlatformClient.supports("wallpaper.preview.desktop")
 
     function begin(path, rawImages) {
+        if (!available) {
+            errorMessage = PlatformClient.capabilityProbeComplete
+                ? "当前平台服务版本不支持桌面壁纸预览"
+                : "平台服务尚未准备好"
+            return false
+        }
         if (pending || restoring || WallpaperService.takeoverPending)
             return false
         const local = WallpaperService.localPath(path)
