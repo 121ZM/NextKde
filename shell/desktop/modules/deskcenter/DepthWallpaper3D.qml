@@ -116,6 +116,7 @@ Item {
         visible: root.ready
         property variant source: sourceInfo
         property variant matte: matteInfo
+        property variant backgroundReference: backgroundInfo
         property vector2d cropScale: root.cropScale
         property real imageZoom: root.imageZoom
         fragmentShader: Qt.resolvedUrl("../../shaders/spatial_foreground.frag.qsb")

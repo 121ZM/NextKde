@@ -17,11 +17,14 @@ QtObject {
     property string influencePath: ""
     property string requestedPath: ""
     property bool requestInFlight: false
+    property bool preparationRequested: false
     property int retryCount: 0
     property string errorMessage: ""
     readonly property bool enabled: AppearanceConfigService.spatialWallpaperEnabled
     readonly property url wallpaperUrl: WallpaperColorSource.wallpaperUrl
     readonly property bool ready: enabled && depthPath.length > 0
+        && imagePath === currentImagePath()
+    readonly property bool prepared: depthPath.length > 0
         && imagePath === currentImagePath()
     readonly property bool layeredReady: ready && backgroundPath.length > 0
         && mattePath.length > 0 && influencePath.length > 0
@@ -52,17 +55,31 @@ QtObject {
             retryCount = 0
             retryTimer.stop()
         }
-        if (enabled && nextPath)
+        if ((enabled || preparationRequested) && nextPath)
             requestDelay.restart()
     }
 
     function requestDepthIfNeeded() {
-        if (!enabled || !imagePath || requestInFlight || depthPath)
+        if ((!enabled && !preparationRequested) || !imagePath
+                || requestInFlight || depthPath)
             return
         requestedPath = imagePath
         requestInFlight = true
         console.log("[SpatialWallpaper] requesting depth for " + requestedPath)
         DepthManager.generate(requestedPath)
+    }
+
+    function prepareForEnable() {
+        refreshWallpaper()
+        if (!imagePath)
+            return false
+        if (prepared)
+            return true
+        errorMessage = ""
+        retryCount = 0
+        preparationRequested = true
+        requestDepthIfNeeded()
+        return true
     }
 
     // Wallpaper services can publish several URLs during startup. Let the
@@ -108,15 +125,17 @@ QtObject {
             if (!root.requestInFlight || sourcePath !== root.requestedPath)
                 return
             root.requestInFlight = false
-            if (root.enabled && sourcePath === root.imagePath && resultPath) {
+            if ((root.enabled || root.preparationRequested)
+                    && sourcePath === root.imagePath && resultPath) {
                 root.retryCount = 0
                 root.errorMessage = ""
                 root.depthPath = resultPath
                 root.backgroundPath = backgroundPath
                 root.mattePath = mattePath
                 root.influencePath = influencePath
+                root.preparationRequested = false
                 console.log("[SpatialWallpaper] depth ready for " + sourcePath)
-            } else if (root.enabled)
+            } else if (root.enabled || root.preparationRequested)
                 root.requestDelay.restart()
         }
         function onFailed(sourcePath, code, message, retryable) {
@@ -125,15 +144,18 @@ QtObject {
             root.requestInFlight = false
             console.warn("[SpatialWallpaper] " + code + ": " + message
                 + " retryable=" + retryable)
-            if (root.enabled && sourcePath === root.imagePath) {
+            if ((root.enabled || root.preparationRequested)
+                    && sourcePath === root.imagePath) {
                 root.errorMessage = message
-                if (retryable && code !== "depth-generation-failed") {
+                root.preparationRequested = false
+                if (root.enabled && retryable
+                        && code !== "depth-generation-failed") {
                     root.retryCount++
                     root.retryTimer.interval = Math.min(30000,
                         2000 * Math.pow(2, Math.min(root.retryCount - 1, 4)))
                     root.retryTimer.restart()
                 }
-            } else if (root.enabled)
+            } else if (root.enabled || root.preparationRequested)
                 root.requestDelay.restart()
         }
     }

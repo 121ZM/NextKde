@@ -13,6 +13,7 @@ Item {
         && ScreenLifecycle.activeScreen !== null
         && targetScreen.name === ScreenLifecycle.activeScreen.name
     readonly property bool active: selectedOutput && SpatialWallpaperService.ready
+        && !WallpaperPreviewService.active
     visible: selectedOutput
     property real pointerX: 0
     property real pointerY: 0
@@ -41,6 +42,9 @@ Item {
         && influenceImage.status === Image.Ready
     readonly property bool meshRendererAvailable: meshRenderer.item !== null
         && meshRenderer.item.ready
+    readonly property bool visualReady: active && sourceImage.status === Image.Ready
+        && (meshRendererAvailable || (depthImage.status === Image.Ready
+            && (!SpatialWallpaperService.layeredReady || layeredTexturesReady)))
 
     function syncMeshRenderer() {
         if (!meshRenderer.item)

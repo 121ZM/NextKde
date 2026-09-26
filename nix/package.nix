@@ -82,6 +82,7 @@ stdenv.mkDerivation {
     # --- Settings QML (for reference; kos-settings binary embeds path) ---
     mkdir -p $out/share/kos/settings
     cp apps/settings/main.qml $out/share/kos/settings/main.qml
+    cp apps/settings/Wallpaper*.qml $out/share/kos/settings/
 
     # --- KWin bridge script ---
     mkdir -p $out/share/kos/platform/kwin
