@@ -76,6 +76,7 @@ private Q_SLOTS:
     void rewireAncestors();
 
 private:
+    friend class SurfaceShapeSyncItem;
     bool eventFilter(QObject *watched, QEvent *event) override;
     void releaseShape();
     void disconnectAncestors();
@@ -83,6 +84,7 @@ private:
 
     QPointer<QQuickItem> m_target;
     QPointer<QQuickWindow> m_window;
+    QPointer<QQuickItem> m_syncItem;
     kos_surface_shape_v1 *m_shape = nullptr;
     wl_surface *m_surface = nullptr;
     qreal m_radius = 0.0;
