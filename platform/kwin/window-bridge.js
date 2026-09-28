@@ -438,9 +438,59 @@ function desktopIds(window) {
 // window model on every copy. Publish only on actual change.
 let lastSnapshotJson = "";
 
+// The scripting `workspace.activeWindow = w` assignment lands immediately,
+// but the per-window `window.active` property only flips once KWin's focus
+// pipeline finishes. A snapshot taken in that gap mixes fresh minimized
+// flags with stale activated flags — the shell then sees the engaged app
+// un-minimized yet inactive AND the demoted app already minimized, cards
+// BOTH (N+1), and the column twitches toward the swapping slot and back
+// when the next snapshot corrects the flags. Until the live property
+// catches up, the window this script itself focused is authoritative;
+// bounded by freshness so a user-driven focus change is never overridden.
+const PENDING_ACTIVE_TTL_MS = 400;
+let pendingActiveId = null;
+let pendingActiveAt = 0;
+
+function setActiveWindow(window) {
+    workspace.activeWindow = window;
+    if (window) {
+        pendingActiveId = windowId(window);
+        pendingActiveAt = Date.now();
+    }
+}
+
 function snapshot() {
-    const windows = [];
     const all = workspace.windowList();
+    // The real KWin-active window, scanned UNFILTERED (transient dialogs
+    // are excluded from `windows` below, so activeId must not be derived
+    // from the filtered list). Its minimized state is captured alongside:
+    // in the focus-pipeline gap the scan still names the just-demoted
+    // window, which is implausible as the active window.
+    let liveActiveId = null;
+    let liveActiveMinimized = false;
+    for (let j = 0; j < all.length; j++) {
+        const w = all[j];
+        if (w && !w.deleted && w.active) {
+            liveActiveId = windowId(w);
+            liveActiveMinimized = !!w.minimized;
+            break;
+        }
+    }
+    // Lag guard (see pendingActiveId above): override with the scripted
+    // target only while the live answer is implausible. A genuine user
+    // focus change (live names an un-minimized window, or the desktop)
+    // always wins immediately.
+    let activeId = liveActiveId;
+    if (pendingActiveId !== null
+            && liveActiveId !== null
+            && liveActiveId !== pendingActiveId
+            && liveActiveMinimized
+            && Date.now() - pendingActiveAt < PENDING_ACTIVE_TTL_MS) {
+        activeId = pendingActiveId;
+    }
+    if (liveActiveId === pendingActiveId)
+        pendingActiveId = null;
+    const windows = [];
     for (let i = 0; i < all.length; i++) {
         const window = all[i];
         if (!includeWindow(window))
@@ -450,7 +500,9 @@ function snapshot() {
             pid: Number(propertyValue(window, "pid", 0)),
             appId: String(window.desktopFileName || window.resourceClass || window.resourceName || ""),
             title: String(window.caption || ""),
-            activated: !!window.active,
+            // Normalized against the authoritative activeId above: one frame
+            // must never mix a stale window.active with fresh minimized.
+            activated: windowId(window) === activeId,
             minimized: !!window.minimized,
             fullscreen: !!window.fullScreen,
             // KWin's authoritative _NET_WM_STATE_DEMANDS_ATTENTION state.
@@ -469,20 +521,6 @@ function snapshot() {
             maximized: isMaximized(window),
             visible: !!propertyValue(window, "visible", true)
         });
-    }
-    // The real KWin-active window, scanned UNFILTERED: transient dialogs
-    // (e.g. login QR popups) are excluded from `windows` above, so consumers
-    // that only see `windows` would read "no active window" while a dialog
-    // holds focus and mistake it for a desktop click. activeId is non-null
-    // exactly when KWin has an active window; if no tracked window carries
-    // it, focus sits on an untracked surface.
-    let activeId = null;
-    for (let j = 0; j < all.length; j++) {
-        const w = all[j];
-        if (w && !w.deleted && w.active) {
-            activeId = windowId(w);
-            break;
-        }
     }
     const json = JSON.stringify({ type: "snapshot", activeId: activeId, windows: windows });
     if (json === lastSnapshotJson)
@@ -635,7 +673,7 @@ function handleCommand(serialized) {
         }
         window.desktops = [desktop];
         if (command.activate)
-            workspace.activeWindow = window;
+            setActiveWindow(window);
         publishAction(command, true);
         scheduleSnapshot();
         return;
@@ -677,7 +715,7 @@ function handleCommand(serialized) {
             }
         }
         if (focused)
-            workspace.activeWindow = focused;
+            setActiveWindow(focused);
         // 复位写在激活之后（见 takeParkedGeometry 头注释：先写后激活会被
         // KWin 的"活动窗拽回工作区"钳位盖掉）
         for (let r = 0; r < restores.length; r++)
@@ -722,7 +760,7 @@ function handleCommand(serialized) {
             }
         }
         if (focused)
-            workspace.activeWindow = focused;
+            setActiveWindow(focused);
         // 复位写在激活之后（activate-clamp 会盖掉激活前提交的几何写入）
         for (let r = 0; r < restores.length; r++)
             applyRestore(restores[r].window, restores[r].geo);
@@ -765,7 +803,7 @@ function handleCommand(serialized) {
             if (geo)
                 window.frameGeometry = geo;
             window.minimized = false;
-            workspace.activeWindow = window;
+            setActiveWindow(window);
             // 激活后再写一次复位（保险带：任何钳位/重放时序都盖不过最后写）
             applyRestore(window, geo);
         } else if (command.action === "minimize") {
