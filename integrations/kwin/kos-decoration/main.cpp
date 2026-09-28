@@ -1,4 +1,4 @@
-#include "liquidglassdecoration.h"
+#include "kosdecoration.h"
 
 #include <KPluginFactory>
 
@@ -7,9 +7,9 @@
 // keeps its KDE 4/5 name even though KDecoration3 plugins install into an
 // `org.kde.kdecoration3` directory -- the directory and the config group are
 // not the same string (see tools/kosctl's kwin_decoration_group).
-// kos_liquid_glass. There is no separate theme= key for a compiled plugin.
-K_PLUGIN_FACTORY_WITH_JSON(KosLiquidGlassDecorationFactory,
+// kos_decoration. There is no separate theme= key for a compiled plugin.
+K_PLUGIN_FACTORY_WITH_JSON(KosDecorationFactory,
                            "metadata.json",
-                           registerPlugin<KOS::LiquidGlassDecoration>();)
+                           registerPlugin<KOS::KosDecoration>();)
 
 #include "main.moc"

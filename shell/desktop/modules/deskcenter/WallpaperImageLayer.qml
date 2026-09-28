@@ -8,6 +8,7 @@ Item {
 
     property url source: ""
     property var targetScreen: null
+    property bool previewTarget: false
     property string fitMode: "crop"
     property string transition: "cinematic"
     property real revealProgress: 0
@@ -15,7 +16,7 @@ Item {
     readonly property bool useReveal: transition === "cinematic" && revealSupported
 
     function reportReady(path) {
-        if (WallpaperPreviewService.active) WallpaperPreviewService.imageReady(path, root.targetScreen?.name || "")
+        if (root.previewTarget) WallpaperPreviewService.imageReady(path, root.targetScreen?.name || "")
         else if (root.targetScreen) WallpaperService.reportImageReady(root.targetScreen.name, path)
     }
     readonly property real pixelRatio: Math.max(1,
@@ -118,7 +119,8 @@ Item {
                     switchAnimation.start()
             } else if (status === Image.Error) {
                 console.warn("[WallpaperImageLayer] image failed: " + source)
-                WallpaperPreviewService.imageFailed(source.toString())
+                if (root.previewTarget)
+                    WallpaperPreviewService.imageFailed(source.toString())
             }
         }
     }

@@ -7,9 +7,9 @@
 }:
 
 stdenv.mkDerivation {
-  pname = "kwin-decoration-liquid-glass";
+  pname = "kwin-kos-decoration";
   version = "unstable";
-  src = "${src}/integrations/kwin/decoration-liquid-glass";
+  src = "${src}/integrations/kwin/kos-decoration";
 
   nativeBuildInputs = [
     cmake
@@ -17,20 +17,18 @@ stdenv.mkDerivation {
   ];
 
   buildInputs = [
-    kdePackages.kwin
-    kdePackages.qtbase
-    kdePackages.kconfig
-    kdePackages.kcoreaddons
     kdePackages.kdecoration
+    kdePackages.kcoreaddons
+    kdePackages.qtbase
   ];
 
   cmakeFlags = [ "-DCMAKE_BUILD_TYPE=Release" ];
   dontWrapQtApps = true;
 
   meta = with lib; {
-    description = "KWin decoration plugin for liquid glass effect";
+    description = "KOS window decoration for KWin - draws the title bar and no buttons";
     homepage = "https://gitee.com/xiaoyintx_ciallo/test";
-    license = licenses.gpl3;
+    license = licenses.mit;
     platforms = platforms.linux;
   };
 }

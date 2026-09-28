@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.21)
 
-project(kos_liquid_glass LANGUAGES CXX)
+project(kos_decoration LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -20,20 +20,18 @@ find_package(KF6 REQUIRED COMPONENTS CoreAddons)
 # KWin scans for decoration plugins.
 find_package(KDecoration3 REQUIRED)
 
-add_library(kos_liquid_glass MODULE
-    appearanceconfig.cpp
-    liquidglassdecoration.cpp
-    trafficlightbutton.cpp
+add_library(kos_decoration MODULE
+    kosdecoration.cpp
     main.cpp
 )
 
-target_link_libraries(kos_liquid_glass PRIVATE
+target_link_libraries(kos_decoration PRIVATE
     Qt6::Core
     Qt6::Gui
     KF6::CoreAddons
     KDecoration3::KDecoration
 )
 
-install(TARGETS kos_liquid_glass
+install(TARGETS kos_decoration
     DESTINATION ${KDE_INSTALL_PLUGINDIR}/${KDECORATION_PLUGIN_DIR}
     COMPONENT kwin_decoration)

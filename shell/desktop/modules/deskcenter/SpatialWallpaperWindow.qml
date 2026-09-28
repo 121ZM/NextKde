@@ -27,11 +27,10 @@ PanelWindow {
         id: ordinaryWallpaper
         anchors.fill: parent
         targetScreen: root.screen
-        source: WallpaperPreviewService.active ? WallpaperPreviewService.image
-            : WallpaperService.takeoverEnabled ? WallpaperService.wallpaperUrl : ""
+        source: WallpaperService.takeoverEnabled ? WallpaperService.wallpaperUrl : ""
         fitMode: WallpaperService.fitMode
         transition: WallpaperService.transition
-        visible: (WallpaperPreviewService.active || WallpaperService.takeoverEnabled) && ordinaryWallpaper.ready
+        visible: WallpaperService.takeoverEnabled && ordinaryWallpaper.ready
             && !wallpaperLayer.visualReady
     }
 

@@ -340,6 +340,71 @@ cv::Mat renderFrame(const cv::Mat &background, const cv::Mat &foreground,
     return result;
 }
 
+// CPU reference for the two perspective planes in layered_wallpaper.frag.
+// This path verifies cached assets without starting the user's shell.
+cv::Mat renderOrbitFrame(const cv::Mat &background, const cv::Mat &foreground,
+                         const cv::Mat &alpha, const cv::Mat &influence,
+                         double pointerX, double pointerY)
+{
+    const double pointerLength = std::max(1.0, std::hypot(pointerX, pointerY));
+    pointerX /= pointerLength;
+    pointerY /= pointerLength;
+    const cv::Size target(kPreviewWidth, kPreviewHeight);
+    const double sourceAspect = static_cast<double>(foreground.cols)
+        / foreground.rows;
+    const double outputAspect = static_cast<double>(target.width) / target.height;
+    const double scaleX = std::min(1.0, outputAspect / sourceAspect) * 0.90;
+    const double scaleY = std::min(1.0, sourceAspect / outputAspect) * 0.90;
+    cv::Mat backX(target, CV_32F), backY(target, CV_32F);
+    cv::Mat frontX(target, CV_32F), frontY(target, CV_32F);
+    for (int y = 0; y < target.height; ++y) {
+        auto *bx = backX.ptr<float>(y);
+        auto *by = backY.ptr<float>(y);
+        auto *fx = frontX.ptr<float>(y);
+        auto *fy = frontY.ptr<float>(y);
+        const double cy = (y + 0.5) / target.height - 0.5;
+        for (int x = 0; x < target.width; ++x) {
+            const double cx = (x + 0.5) / target.width - 0.5;
+            const double backPerspective = 1.0
+                + (pointerX * cx + pointerY * cy) * 0.065;
+            const double frontPerspective = 1.0
+                + (pointerX * cx + pointerY * cy) * 0.13;
+            const double centerU = 0.5 + cx * scaleX;
+            const double centerV = 0.5 + cy * scaleY;
+            const int sampleX = std::clamp(static_cast<int>(centerU * influence.cols),
+                                           0, influence.cols - 1);
+            const int sampleY = std::clamp(static_cast<int>(centerV * influence.rows),
+                                           0, influence.rows - 1);
+            const double weight = influence.at<uchar>(sampleY, sampleX) / 255.0;
+            const double frontTravel = 0.008 + 0.004 * weight;
+            bx[x] = static_cast<float>((0.5 + cx / backPerspective * scaleX
+                                        - pointerX * 0.003) * background.cols);
+            by[x] = static_cast<float>((0.5 + cy / backPerspective * scaleY
+                                        - pointerY * 0.003) * background.rows);
+            fx[x] = static_cast<float>((0.5 + cx / frontPerspective * scaleX
+                                        + pointerX * frontTravel) * foreground.cols);
+            fy[x] = static_cast<float>((0.5 + cy / frontPerspective * scaleY
+                                        + pointerY * frontTravel) * foreground.rows);
+        }
+    }
+    cv::Mat back, front, matte;
+    cv::remap(background, back, backX, backY, cv::INTER_LINEAR,
+              cv::BORDER_REPLICATE);
+    cv::remap(foreground, front, frontX, frontY, cv::INTER_LINEAR,
+              cv::BORDER_REPLICATE);
+    cv::remap(alpha, matte, frontX, frontY, cv::INTER_LINEAR,
+              cv::BORDER_CONSTANT, cv::Scalar(0));
+    cv::Mat backFloat, frontFloat, alphaFloat, alpha3;
+    back.convertTo(backFloat, CV_32FC3, 1.0 / 255.0);
+    front.convertTo(frontFloat, CV_32FC3, 1.0 / 255.0);
+    matte.convertTo(alphaFloat, CV_32F, 1.0 / 255.0);
+    cv::cvtColor(alphaFloat, alpha3, cv::COLOR_GRAY2BGR);
+    cv::Mat result = frontFloat.mul(alpha3)
+        + backFloat.mul(cv::Scalar::all(1.0) - alpha3);
+    result.convertTo(result, CV_8UC3, 255.0);
+    return result;
+}
+
 } // namespace
 
 int main(int argc, char **argv)
@@ -359,16 +424,22 @@ int main(int argc, char **argv)
             const cv::Mat background = resizedToWidth(originalBackground, kWorkWidth);
             const cv::Mat matte = resizedToWidth(originalMatte, kWorkWidth);
             const cv::Mat influence = resizedToWidth(originalInfluence, kWorkWidth);
-            const cv::Mat noOcclusion(photo.size(), CV_8UC1, cv::Scalar(0));
-            const Motion motion{-0.005, 0.020, 0.010, 0.050};
             const fs::path outputDirectory = argv[6];
             fs::create_directories(outputDirectory);
             for (const auto &frame : {std::pair{"left", -1.0},
                                       std::pair{"center", 0.0},
                                       std::pair{"right", 1.0}}) {
-                const cv::Mat preview = renderFrame(background, photo, matte,
-                    influence, noOcclusion, frame.second, motion);
+                const cv::Mat preview = renderOrbitFrame(background, photo, matte,
+                    influence, frame.second, 0.0);
                 cv::imwrite((outputDirectory / (std::string(frame.first)
+                            + ".jpg")).string(), preview,
+                            {cv::IMWRITE_JPEG_QUALITY, 92});
+            }
+            for (const auto &corner : {std::pair{"top-left", -1.0},
+                                       std::pair{"bottom-right", 1.0}}) {
+                const cv::Mat preview = renderOrbitFrame(background, photo, matte,
+                    influence, corner.second, corner.second);
+                cv::imwrite((outputDirectory / (std::string(corner.first)
                             + ".jpg")).string(), preview,
                             {cv::IMWRITE_JPEG_QUALITY, 92});
             }
