@@ -598,6 +598,14 @@ function handleCommand(serialized) {
         publishDesktops();
         return;
     }
+    // Shell (re)subscribe asks for a fresh authoritative snapshot: the daemon
+    // replays its cached one, which can predate the current focus (all
+    // activated=false) and there is no later windowActivated event to correct
+    // it if focus never changes again.
+    if (command.action === "refresh-snapshot") {
+        scheduleSnapshot();
+        return;
+    }
     if (command.action === "update-layout") {
         publishAction(command, updateLayout(command));
         return;
@@ -823,6 +831,12 @@ function watchWindow(window) {
 const initial = workspace.windowList();
 for (let i = 0; i < initial.length; i++)
     watchWindow(initial[i]);
+
+// Publish one snapshot right after load: the daemon's replay cache starts
+// empty on every platform restart, so without this a freshly (re)subscribed
+// shell stays recordless (and activeWindowId-less) until some window event
+// happens to fire.
+scheduleSnapshot();
 
 workspace.windowAdded.connect(function(window) {
     watchWindow(window);
