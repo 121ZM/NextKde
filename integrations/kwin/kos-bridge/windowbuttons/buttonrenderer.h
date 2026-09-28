@@ -3,6 +3,8 @@
 #include <QColor>
 #include <QHash>
 #include <QImage>
+#include <QObject>
+#include <QPointer>
 #include <QRectF>
 #include <QSet>
 #include <QSizeF>
@@ -47,11 +49,11 @@ struct PaintTransform {
 // tint is read from the window, because a bar's colour is a property of the
 // whole bar and a median over it is right even where nothing in it is
 // understood -- see titlebarmetrics.h.
-class ButtonRenderer
+class ButtonRenderer : public QObject
 {
 public:
     ButtonRenderer();
-    ~ButtonRenderer();
+    ~ButtonRenderer() override;
 
     void paint(const KWin::RenderTarget &renderTarget,
                const KWin::RenderViewport &viewport,
@@ -178,10 +180,8 @@ private:
     // light is, this says what it does.
     static Action actionFor(Type type);
 
-    // The panel's tint, read from the window's own title bar and then kept
-    // under observation for as long as the window lives. Returns false only
-    // while nothing has ever been read from the window and there is therefore
-    // no tint to draw with.
+    // Read the active window's title bar and reuse the last tint while it is
+    // inactive. Returns false until the first successful reading.
     //
     // Reading is easy; deciding when a reading is the bar rather than something
     // that happens to be under the panel for a moment is not, and is what most
@@ -193,13 +193,10 @@ private:
                  const KWin::Region &deviceRegion,
                  bool *dark);
 
-    // Ask the compositor for another frame over the sampled band, at most once
-    // per sample interval. Nothing damages a window on our behalf, so without
-    // this a read that comes back unusable -- or one that still needs checking
-    // -- would only be made again when the application happens to repaint,
-    // which for an idle window is never, and the panel would never appear.
-    static void requestSample(KWin::EffectWindow *window, const QRectF &panel,
-                              std::chrono::steady_clock::time_point *lastRepaint);
+    // Schedule one repaint at the next sampling deadline. The timer is
+    // cancelled with this renderer; inactive or deleted windows are skipped.
+    void scheduleSample(KWin::EffectWindow *window);
+    static void requestSample(KWin::EffectWindow *window, const QRectF &panel);
 
     // The geometry the window's panel is drawn with: the draft while one is
     // being adjusted, otherwise the configuration's.
@@ -254,32 +251,24 @@ private:
         // been read has no tint and gets no panel for now.
         bool known = false;
         bool dark = true;
-        // The reading being watched, and when it was first seen. It takes over
-        // from `dark` once it has held for ConfirmTime; a reading that only
-        // lasts a frame or two is the window being placed or still loading, and
-        // adopting it is what leaves a panel the wrong colour for the life of
-        // the window.
+        // A changed tint takes over only when another reading confirms it
+        // after ConfirmTime.
         bool pending = false;
         bool pendingDark = false;
         Clock::time_point pendingSince{};
-        // When this entry last read its window, for the rate limits in
-        // ButtonRenderer::tintFor. Also what the interval is measured from
-        // while the entry is settled and nothing needs confirming.
+        // Initial reads are close together; later reads are three seconds
+        // apart, including when the application paints continuously.
         Clock::time_point lastRead{};
-        // Repaint requests are separately rate-limited. Without this, every
-        // paint during tint confirmation schedules another paint, even though
-        // the next useful read cannot happen for 100 ms.
-        Clock::time_point lastRepaint{};
-        // Deadline for asking the compositor for frames of this effect's own
-        // while the entry has no settled tint. Reset when the reading that is
-        // being watched changes, so the budget is spent on arriving at one
-        // reading rather than on chasing whatever the bar is doing.
-        Clock::time_point giveUp{};
-        // Window size the tint was read at. A resize moves the panel, and with
-        // it the band that was sampled.
+        int warmupReads = 0;
+        bool sampleScheduled = false;
+        quint64 sampleToken = 0;
+        // Latest geometry for the timer's repaint. A resize updates these
+        // without restarting the fast sampling phase.
         QSizeF windowSize;
+        QRectF panel;
     };
     QHash<KWin::EffectWindow *, CacheEntry> m_cache;
+    quint64 m_nextSampleToken = 0;
 
     struct HitRects {
         // The drawn panel, and the pointer area it claims: the panel expanded

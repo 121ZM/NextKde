@@ -14,6 +14,7 @@
 #include <QPainter>
 #include <QPainterPath>
 #include <QPalette>
+#include <QTimer>
 #include <QVector4D>
 
 #include <epoxy/gl.h>
@@ -40,26 +41,11 @@ constexpr int Supersample = 4;
 // flash (a tooltip passing over the bar, an animation frame) from flipping the
 // panel.
 constexpr auto ConfirmTime = std::chrono::milliseconds(500);
-// How long this effect will keep asking the compositor for frames of its own
-// while a window's tint has not settled. Nothing else damages a window on this
-// effect's account, so without these frames a reading that has not been
-// confirmed would only be taken again when the application repaints for its own
-// reasons -- never, for an idle window -- and a tint that arrived wrong would
-// stay wrong. Bounded because a window whose bar can never be read (one that
-// stays covered) must not keep the compositor awake, and because a bar that
-// never holds still has to be settled for one way or the other eventually.
-constexpr auto SettleBudget = std::chrono::milliseconds(2500);
-// Shortest gap between two readings of the same window once its tint has
-// settled. The compositor calls in for every frame the window paints, and a
-// window that paints continuously -- a video, a terminal -- would otherwise
-// cost a readback of its title bar on every one of those frames. This is also
-// how soon a change the window makes on its own (a theme switch) is noticed.
-constexpr auto RecheckInterval = std::chrono::milliseconds(500);
-// Shortest gap between two readings while the tint has not settled. Eager,
-// because the sooner a reading is repeated the sooner it can be confirmed, but
-// not every frame: the confirmation is decided by elapsed time, so reading
-// faster than this buys nothing and costs a readback each time.
-constexpr auto WatchInterval = std::chrono::milliseconds(100);
+// Four early readings let a newly opened title bar finish painting and provide
+// a reading after ConfirmTime. Later reads stay sparse even on busy windows.
+constexpr int WarmupReads = 4;
+constexpr auto WarmupInterval = std::chrono::milliseconds(250);
+constexpr auto RecheckInterval = std::chrono::seconds(3);
 // Window sizes are compared with this tolerance, in logical pixels. KWin's
 // geometry is fractional -- a restored window reports a width like
 // 1345.9999999999998 -- so comparing exactly re-reads the tint on sub-pixel
@@ -566,117 +552,114 @@ bool ButtonRenderer::tintFor(const KWin::RenderTarget &renderTarget,
                               const KWin::Region &deviceRegion,
                               bool *dark)
 {
+    // A cached tint still draws on an inactive window, but only the active
+    // window is allowed to read pixels or keep a sampling timer alive.
+    if (!KWin::effects || KWin::effects->activeWindow() != window) {
+        const auto cached = m_cache.constFind(window);
+        if (cached == m_cache.constEnd() || !cached->known) {
+            return false;
+        }
+        *dark = cached->dark;
+        return true;
+    }
+
     const QSizeF windowSize = window->frameGeometry().size();
     const Clock::time_point now = Clock::now();
 
     auto it = m_cache.find(window);
     if (it == m_cache.end()) {
         it = m_cache.insert(window, CacheEntry{});
-        it->windowSize = windowSize;
-        it->giveUp = now + SettleBudget;
+        it->sampleToken = ++m_nextSampleToken;
     } else if (!sameSize(it->windowSize, windowSize)) {
-        // A resize moves the panel, and with it the band that is sampled, so
-        // the tint is read again. The tint on screen is carried over rather
-        // than dropped: it is the same application either way, and a panel that
-        // blinks out on every step of a resize drag is worse than one that
-        // trails the new band by a frame.
-        const bool known = it->known;
-        const bool dark = it->dark;
-        *it = CacheEntry{};
-        it->windowSize = windowSize;
-        it->known = known;
-        it->dark = dark;
-        it->giveUp = now + SettleBudget;
-    }
-
-    // A reading that has been held long enough takes over the panel. This is
-    // checked before the read below, because the evidence is the time that has
-    // passed, not another reading.
-    if (it->pending
-        && (now - it->pendingSince >= ConfirmTime || now >= it->giveUp)) {
-        const bool changed = it->dark != it->pendingDark;
-        it->dark = it->pendingDark;
+        // Resize can paint every frame. Keep the cadence and the displayed
+        // tint; the next scheduled read will use the new band.
         it->pending = false;
-        if (changed) {
-            // Repaint, so a change the panel has caught up with (an application
-            // that has finished loading, a theme switch) shows now instead of
-            // at the window's next repaint for its own reasons, which for an
-            // idle window is never.
-            requestSample(window, panel, &it->lastRepaint);
-        }
     }
+    it->windowSize = windowSize;
+    it->panel = panel;
 
-    const bool settled = it->known && !it->pending;
-    const auto interval = settled ? RecheckInterval : WatchInterval;
-    if (!settled || now - it->lastRead >= interval) {
+    const auto interval = it->warmupReads < WarmupReads
+        ? WarmupInterval : RecheckInterval;
+    if (it->lastRead == Clock::time_point{} || now - it->lastRead >= interval) {
         bool sampled = false;
-        // Rate-limited whether or not the read works: a band that stays
-        // unreadable is not worth a readback on every frame either.
+        // Count attempts, including unreadable bars. An obscured window cannot
+        // keep triggering the fast sampling phase indefinitely.
         it->lastRead = now;
+        if (it->warmupReads < WarmupReads) {
+            ++it->warmupReads;
+        }
         if (sampleTitlebarTint(renderTarget, viewport, window, deviceRegion,
                                panel, &sampled)) {
             if (!it->known) {
-                // Shown at once, so the panel arrives with the window rather
-                // than a beat later. It is only a candidate -- the check above
-                // is what decides whether it survives.
+                // Show the first usable tint immediately. Later readings can
+                // still correct it after the title bar has settled.
                 it->known = true;
                 it->dark = sampled;
                 it->pending = true;
                 it->pendingDark = sampled;
                 it->pendingSince = now;
-                it->giveUp = now + SettleBudget;
-            } else if (!it->pending || it->pendingDark != sampled) {
-                // A reading that disagrees with what is on screen. Held rather
-                // than adopted (see above). A fresh disagreement also restarts
-                // the budget for forcing frames: only the reading it started
-                // with has to be settled for, not every reading it passes
-                // through on the way there.
-                const bool fresh = !it->pending;
+            } else if (it->pending && sampled == it->pendingDark
+                       && now - it->pendingSince >= ConfirmTime) {
+                it->dark = sampled;
+                it->pending = false;
+            } else if (it->pending && sampled != it->pendingDark) {
+                // A conflicting reading resets confirmation. If it matches
+                // the displayed tint there is no change left to confirm.
+                it->pending = sampled != it->dark;
+                it->pendingDark = sampled;
+                it->pendingSince = now;
+            } else if (!it->pending && sampled != it->dark) {
                 it->pending = true;
                 it->pendingDark = sampled;
                 it->pendingSince = now;
-                if (fresh) {
-                    it->giveUp = now + SettleBudget;
-                }
             }
         }
     }
 
+    scheduleSample(window);
     if (!it->known) {
-        // Nothing has been read from this window yet, so there is no tint to
-        // draw with. Keep asking for frames while there is budget for it: a
-        // window that has not painted yet may still do so, and one that is
-        // covered will be read when it is uncovered and repaints -- which it
-        // does for its own reasons, so it needs no help from here.
-        if (now < it->giveUp) {
-            requestSample(window, panel, &it->lastRepaint);
-        }
         return false;
     }
-
-    if (it->pending && now < it->giveUp) {
-        // Keep the frames coming until the reading has had its ConfirmTime.
-        requestSample(window, panel, &it->lastRepaint);
-    }
-
     *dark = it->dark;
     return true;
 }
 
-void ButtonRenderer::requestSample(
-    KWin::EffectWindow *window, const QRectF &panel,
-    std::chrono::steady_clock::time_point *lastRepaint)
+void ButtonRenderer::scheduleSample(KWin::EffectWindow *window)
+{
+    auto it = m_cache.find(window);
+    if (it == m_cache.end() || it->sampleScheduled) {
+        return;
+    }
+    const auto interval = it->warmupReads < WarmupReads
+        ? WarmupInterval : RecheckInterval;
+    const auto due = it->lastRead + interval;
+    const auto remaining = std::chrono::duration_cast<std::chrono::milliseconds>(
+        due - Clock::now());
+    const int delay = std::max(1, int(remaining.count()) + 1);
+    const quint64 token = it->sampleToken;
+    it->sampleScheduled = true;
+    QTimer::singleShot(delay, this,
+                       [this, guarded = QPointer<KWin::EffectWindow>(window),
+                        token]() {
+        if (!guarded) {
+            return;
+        }
+        auto entry = m_cache.find(guarded);
+        if (entry == m_cache.end() || entry->sampleToken != token) {
+            return;
+        }
+        entry->sampleScheduled = false;
+        if (!KWin::effects || KWin::effects->activeWindow() != guarded) {
+            return;
+        }
+        requestSample(guarded, entry->panel);
+    });
+}
+
+void ButtonRenderer::requestSample(KWin::EffectWindow *window, const QRectF &panel)
 {
     if (!KWin::effects || !window) {
         return;
-    }
-    const Clock::time_point now = Clock::now();
-    if (lastRepaint && *lastRepaint != Clock::time_point{}
-        && now - *lastRepaint < WatchInterval) {
-        return;
-    }
-    if (lastRepaint) {
-        *lastRepaint = now;
     }
     const QRectF frame = window->frameGeometry();
     // The band the tint is read from: the panel's rows, across the window's
@@ -861,7 +844,10 @@ void ButtonRenderer::repaintPanels(KWin::EffectWindow *a, KWin::EffectWindow *b)
     // at, and empty for a window that has none.
     repaintRect(currentRect(a));
     if (b != a) {
-        repaintRect(currentRect(b));
+        const QRectF panel = currentRect(b);
+        // An inactive CSD window may have no cached tint and therefore no
+        // panel yet. Give it one paint on activation so its first read runs.
+        repaintRect(panel.isEmpty() && b ? QRectF(b->frameGeometry()) : panel);
     }
 }
 
@@ -1083,11 +1069,12 @@ QImage ButtonRenderer::buildPanel(const QSizeF &panelSize, bool active, bool dar
         painter.setBrush(dotColor(type, active));
         painter.drawEllipse(disc);
 
-        // The X reaches into all four corners of its box and so reads as the
-        // largest of the three glyphs; it gets a little more room inside its dot
-        // than the bar and the arrows do, which is what makes the three look
-        // like the same size.
-        const qreal inset = size * (type == Close ? 0.34 : 0.28);
+        // The inward restore arrows each occupy less than half their box. Give
+        // that state a wider box so its wedges remain legible at the default
+        // 14-pixel button size, while keeping a gap between their tips.
+        const qreal inset = size * (type == Close ? 0.34
+                                    : type == Maximize && maximized ? 0.12
+                                    : 0.28);
         const QRectF glyph = disc.adjusted(inset, inset, -inset, -inset);
 
         QPen pen(QColor(0, 0, 0, 0xA0));
@@ -1109,17 +1096,34 @@ QImage ButtonRenderer::buildPanel(const QSizeF &panelSize, bool active, bool dar
             painter.setPen(Qt::NoPen);
             painter.setBrush(QColor(0, 0, 0, 0xA0));
 
-            const qreal armX = glyph.width() * 0.72;
-            const qreal armY = glyph.height() * 0.72;
+            // The arm is a fraction of the glyph box, and the two states cannot
+            // share one. Each wedge is a right triangle whose legs run along two
+            // edges of the box: outward (not maximized) the right angle sits on
+            // the corner and the wedge fills it, inward (maximized) the right
+            // angle sits `arm` in from the corner and the wedge fills the part
+            // nearer the centre instead.
+            //
+            // That puts the two states on opposite sides of the same inequality,
+            // and only one of them stays disjoint across the whole range. Let
+            // `side` be the box and take the diagonal x + y. Outward, the wedges
+            // are x + y <= arm and x + y >= 2 * side - arm: they never meet, for
+            // any arm at all. Inward they are x + y >= arm and x + y <=
+            // 2 * side - arm, which meet the moment the arm passes the box's
+            // centre -- and at the 0.72 the two states used to share, both
+            // wedges covered the middle, overlapped by half their own ink, and
+            // rendered as one solid mass with no readable shape. 0.46 is inside
+            // the disjoint range with a visible gap; at 0.50 they touch at a
+            // single point and read as one mark again.
+            const qreal armX = glyph.width() * (maximized ? 0.46 : 0.72);
+            const qreal armY = glyph.height() * (maximized ? 0.46 : 0.72);
 
             // Two wedges on the diagonal, and the two states are the two halves
             // of the same pair of squares: not maximized they fill the outer
-            // corners and point out of the button, maximized they fill the
-            // inner halves instead and point at each other. Which one is drawn
-            // is decided by what clicking the dot would do, so the mark is the
-            // same statement the button makes -- an "expand" arrow left on a
-            // window that is already maximized would be pointing at a state the
-            // window is in.
+            // corners and point out of the button, maximized they point at each
+            // other instead. Which one is drawn is decided by what clicking the
+            // dot would do, so the mark is the same statement the button makes
+            // -- an "expand" arrow left on a window that is already maximized
+            // would be pointing at a state the window is in.
             QPainterPath tl;
             QPainterPath br;
             if (maximized) {
