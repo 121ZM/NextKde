@@ -18,6 +18,100 @@ function windowId(window) {
     return normalizeId(window.internalId);
 }
 
+// ── 停泊（实时卡片模式）──
+// 收编窗静默还原后**移到屏幕外**：保持 mapped/客户端持续送帧（实时缩略图
+// 的前提），桌面上不可见——旧方案只 keepBelow 压底，窗口全摊在桌面上
+//（用户否决"桌面上全是应用程序"）。几何存图，所有把它带回屏幕的路径
+//（activate / activate-group / engage-swap / park value=false）自动复位。
+// ⚠️ 停泊命令经 50ms/条串行轮询执行，shell 入队时的"仍最小化"校验到执行
+// 时可能已过时（快速连点卡片）——所以停泊侧还有两道防御：迟到的 park 绝不
+// 碰未最小化的窗口（它已被展开到桌面）；档案侧拒绝把屏幕外几何存成"原始
+// 位置"（否则展开时还原回屏幕外，KWin 还会把活动窗钳到工作区右缘窄条）。
+const parkedGeometry = {};
+
+// 单屏逻辑宽 ~1696、停泊 X=5000；超过此值即"已在屏幕外"（多屏右摆再校准）
+const PARK_OFFSCREEN_X = 3000;
+
+// 取出停泊档案（删除并返回普通对象 {x,y,width,height}；无档案返回 null）。
+// 复位写入必须放在 workspace.activeWindow 赋值**之后**：几何写入是异步提交
+// 的，先写后激活时 KWin 在激活瞬间看到的仍是停泊位（5000），会把活动窗
+// 钳到工作区右缘窄条（1272）盖掉排队中的还原——实测窗口"飞到最右看不见"
+// 即此。激活后再写，复位必然最后生效。
+function takeParkedGeometry(window) {
+    const key = windowId(window);
+    const saved = parkedGeometry[key];
+    if (!saved)
+        return null;
+    delete parkedGeometry[key];
+    return saved;
+}
+
+// 应用复位：有档案写档案；无档案却在屏幕外（档案被清/迟到的停泊拽走过）
+// 拉回工作区内——否则激活时 KWin 只把它钳到右缘窄条，窗口"飞到最右看不见"
+function applyRestore(window, geo) {
+    if (geo) {
+        window.frameGeometry = geo;
+        return;
+    }
+    const stranded = window.frameGeometry;
+    if (stranded.x > PARK_OFFSCREEN_X) {
+        try {
+            window.frameGeometry = {
+                x: 300, y: stranded.y,
+                width: stranded.width, height: stranded.height
+            };
+            print("[QuickshellWindowBridge] unpark heal id=" + windowId(window)
+                  + " x=" + stranded.x + " -> 300");
+        } catch (error) {
+            print("[QuickshellWindowBridge] unpark heal failed id="
+                  + windowId(window) + " error=" + error);
+        }
+    }
+}
+
+function parkWindow(window, on) {
+    const key = windowId(window);
+    if (on) {
+        if (parkedGeometry[key])
+            return;
+        const current = window.frameGeometry;
+        if (current.x > PARK_OFFSCREEN_X) {
+            // 档案丢失后的再次停泊：窗口已在屏幕外，把停泊位存成原始位置
+            // 会永久污染档案——跳过，保持停泊现状等展开路径兜底
+            print("[QuickshellWindowBridge] park skip lost-archive id=" + key
+                  + " x=" + current.x);
+            return;
+        }
+        try {
+            const g = window.frameGeometry;
+            // ⚠️ KWin 脚本引擎对 QRect 属性返回的是引用——直接把
+            // window.frameGeometry 存进档案，下一行把窗口移到屏幕外时档案会
+            // 跟着变成停泊位（5000），展开时"还原"就是把 5000 写回去，活动
+            // 窗随即被 KWin 钳到工作区右缘窄条（1272）。必须抄成普通对象。
+            parkedGeometry[key] = {
+                x: g.x, y: g.y, width: g.width, height: g.height
+            };
+            // ⚠️ KWin 6.6 无 workspace.geometry（TypeError 实测）——用绝对
+            // 停泊 X（远超任何单屏逻辑宽；本机 1696），多屏右摆场景再校准
+            const parkedX = 5000;
+            window.frameGeometry = {
+                x: parkedX,
+                y: g.y, width: g.width, height: g.height
+            };
+        } catch (error) {
+            delete parkedGeometry[key];
+            print("[QuickshellWindowBridge] park failed id=" + key
+                  + " error=" + error);
+        }
+    } else {
+        applyRestore(window, takeParkedGeometry(window));
+    }
+}
+
+workspace.windowRemoved.connect(function(window) {
+    delete parkedGeometry[windowId(window)];
+});
+
 function propertyValue(window, name, fallback) {
     try {
         const value = window[name];
@@ -376,7 +470,21 @@ function snapshot() {
             visible: !!propertyValue(window, "visible", true)
         });
     }
-    const json = JSON.stringify({ type: "snapshot", windows: windows });
+    // The real KWin-active window, scanned UNFILTERED: transient dialogs
+    // (e.g. login QR popups) are excluded from `windows` above, so consumers
+    // that only see `windows` would read "no active window" while a dialog
+    // holds focus and mistake it for a desktop click. activeId is non-null
+    // exactly when KWin has an active window; if no tracked window carries
+    // it, focus sits on an untracked surface.
+    let activeId = null;
+    for (let j = 0; j < all.length; j++) {
+        const w = all[j];
+        if (w && !w.deleted && w.active) {
+            activeId = windowId(w);
+            break;
+        }
+    }
+    const json = JSON.stringify({ type: "snapshot", activeId: activeId, windows: windows });
     if (json === lastSnapshotJson)
         return;
     lastSnapshotJson = json;
@@ -521,6 +629,112 @@ function handleCommand(serialized) {
         return;
     }
 
+    // Group activation (macOS semantics): restore every window of an app
+    // together, then focus the one the user targeted. This must be ONE atomic
+    // command — the shell coalesces consecutive "activate" commands into a
+    // single pending slot, so sibling restores sent separately get overwritten
+    // by the focus activation and never reach KWin.
+    if (command.action === "activate-group") {
+        const ids = Array.isArray(command.ids) ? command.ids : [];
+        const restores = [];
+        let focused = null;
+        let restored = 0;
+        for (let i = 0; i < ids.length; i++) {
+            const groupWindow = findWindow(ids[i]);
+            if (!groupWindow)
+                continue;
+            try {
+                const geo = takeParkedGeometry(groupWindow);
+                // 先复位再解除最小化：解除最小化的重映射瞬间窗口必须已在
+                // 真位置——映射在 5000 上再变活动窗，KWin 的"活动窗拽回
+                // 工作区"钳位会在异步重放里盖掉之后排队的任何写入（实测）
+                if (geo)
+                    groupWindow.frameGeometry = geo;
+                groupWindow.minimized = false;
+                // 实时卡片模式把后台窗压在桌面底层（keepBelow）；整组激活
+                // 即走向前台，压底标记必须一并摘掉
+                groupWindow.keepBelow = false;
+                if (geo)
+                    restores.push({ window: groupWindow, geo: geo });
+                restored++;
+                if (ids[i] === command.focusId)
+                    focused = groupWindow;
+            } catch (error) {
+                print("[QuickshellWindowBridge] activate-group restore failed"
+                      + " id=" + ids[i] + " error=" + error);
+            }
+        }
+        if (focused)
+            workspace.activeWindow = focused;
+        // 复位写在激活之后（见 takeParkedGeometry 头注释：先写后激活会被
+        // KWin 的"活动窗拽回工作区"钳位盖掉）
+        for (let r = 0; r < restores.length; r++)
+            applyRestore(restores[r].window, restores[r].geo);
+        print("[QuickshellWindowBridge] activate-group restored=" + restored
+              + " focused=" + (focused ? 1 : 0));
+        publishAction(command, true);
+        scheduleSnapshot();
+        return;
+    }
+
+    if (command.action === "engage-swap") {
+        // 点击卡片的同拍交换（activate+minimize 一条命令一个 tick 处理完）：
+        // 分开发 activate-group + N 条 minimize 会按桥 50ms 轮询一拍一条，
+        // 收编比激活晚一拍起跑（实测 50ms，实时模式肉眼可见"慢半拍"）。
+        // 顺序：还原/摘压底 → 聚焦 → 收编（三段事件在同一脚本 tick 内
+        // 触发，特效动画同帧起跑）。
+        const actIds = Array.isArray(command.ids) ? command.ids : [];
+        const minIds = Array.isArray(command.minimizeIds)
+            ? command.minimizeIds : [];
+        const restores = [];
+        let focused = null;
+        for (let i = 0; i < actIds.length; i++) {
+            const groupWindow = findWindow(actIds[i]);
+            if (!groupWindow)
+                continue;
+            try {
+                const geo = takeParkedGeometry(groupWindow);
+                // 先复位再解除最小化（同 activate-group：重映射在停泊位上
+                // 会触发活动窗钳位的异步重放，盖掉后续写入）
+                if (geo)
+                    groupWindow.frameGeometry = geo;
+                groupWindow.minimized = false;
+                groupWindow.keepBelow = false;
+                if (geo)
+                    restores.push({ window: groupWindow, geo: geo });
+                if (actIds[i] === command.focusId)
+                    focused = groupWindow;
+            } catch (error) {
+                print("[QuickshellWindowBridge] engage-swap restore failed"
+                      + " id=" + actIds[i] + " error=" + error);
+            }
+        }
+        if (focused)
+            workspace.activeWindow = focused;
+        // 复位写在激活之后（activate-clamp 会盖掉激活前提交的几何写入）
+        for (let r = 0; r < restores.length; r++)
+            applyRestore(restores[r].window, restores[r].geo);
+        let collected = 0;
+        for (let m = 0; m < minIds.length; m++) {
+            const demoted = findWindow(minIds[m]);
+            if (!demoted)
+                continue;
+            try {
+                demoted.minimized = true;
+                collected++;
+            } catch (error) {
+                print("[QuickshellWindowBridge] engage-swap collect failed"
+                      + " id=" + minIds[m] + " error=" + error);
+            }
+        }
+        print("[QuickshellWindowBridge] engage-swap restored=" + actIds.length
+              + " collected=" + collected
+              + " focused=" + (focused ? 1 : 0));
+        publishAction(command, true);
+        scheduleSnapshot();
+        return;
+    }
+
     const window = findWindow(command.id);
     if (!window) {
         print("[QuickshellWindowBridge] command target missing id=" + command.id);
@@ -528,15 +742,41 @@ function handleCommand(serialized) {
         return;
     }
 
-    try {
+        try {
         if (command.action === "activate") {
             // An app on another virtual desktop can be minimized. Restore it
             // before making it active, otherwise KWin may accept the request but
-            // leave it invisible.
+            // leave it invisible. 停泊窗必须先复位几何再激活（否则激活到屏幕外）。
+            const geo = takeParkedGeometry(window);
+            // 先复位再解除最小化（同 activate-group：重映射在停泊位上会
+            // 触发活动窗钳位的异步重放）
+            if (geo)
+                window.frameGeometry = geo;
             window.minimized = false;
             workspace.activeWindow = window;
+            // 激活后再写一次复位（保险带：任何钳位/重放时序都盖不过最后写）
+            applyRestore(window, geo);
         } else if (command.action === "minimize") {
             window.minimized = command.value !== false;
+        } else if (command.action === "keep-below") {
+            // 实时卡片模式：静默还原后的后台窗压到桌面底层，不抢活动窗
+            window.keepBelow = command.value !== false;
+        } else if (command.action === "park") {
+            // 实时卡片模式收编停泊：静默还原（suppress 名单在 shell 侧已
+            // 落盘）→ 压底兜底 → 移到屏幕外，一个 tick 内完成不闪现。
+            // ⚠️ 迟到的 park（入队后用户又点开了这扇窗）绝不执行：目标已是
+            // 未最小化 = 它已在桌面展示，拽去屏幕外就是"窗口飞出桌面"
+            if (command.value !== false && !window.minimized) {
+                print("[QuickshellWindowBridge] park skipped engaged id="
+                      + command.id);
+                publishAction(command, true);
+                return;
+            }
+            parkWindow(window, command.value !== false);
+            if (command.value !== false) {
+                window.minimized = false;
+                window.keepBelow = true;
+            }
         } else if (command.action === "close") {
             window.closeWindow();
         }
