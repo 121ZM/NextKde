@@ -13,6 +13,7 @@
 
 #include <QPainter>
 #include <QPainterPath>
+#include <QPalette>
 #include <QVector4D>
 
 #include <epoxy/gl.h>
@@ -365,7 +366,18 @@ void ButtonRenderer::paint(const KWin::RenderTarget &renderTarget,
         dark = false;
         break;
     case PanelBackground::Auto:
-        if (!tintFor(renderTarget, viewport, window, local, deviceRegion, &dark)) {
+        // The KOS decoration paints this strip from the window palette itself.
+        // Reuse that exact source instead of synchronously reading the rendered
+        // title bar back from the GPU. Client-side decorations still need the
+        // pixel sampler because their title-bar color is not exposed to KWin.
+        if (config.kosDecorationSelected && window->hasDecoration()
+            && window->window()) {
+            const QColor color = window->window()->palette().color(QPalette::Window);
+            const int luma = (54 * color.red() + 183 * color.green()
+                              + 19 * color.blue()) >> 8;
+            dark = luma < 128;
+        } else if (!tintFor(renderTarget, viewport, window, local, deviceRegion,
+                            &dark)) {
             // No panel this frame, so no click should land on one either.
             m_hits.remove(window);
             return;
@@ -590,7 +602,7 @@ bool ButtonRenderer::tintFor(const KWin::RenderTarget &renderTarget,
             // that has finished loading, a theme switch) shows now instead of
             // at the window's next repaint for its own reasons, which for an
             // idle window is never.
-            requestSample(window, panel);
+            requestSample(window, panel, &it->lastRepaint);
         }
     }
 
@@ -637,24 +649,34 @@ bool ButtonRenderer::tintFor(const KWin::RenderTarget &renderTarget,
         // covered will be read when it is uncovered and repaints -- which it
         // does for its own reasons, so it needs no help from here.
         if (now < it->giveUp) {
-            requestSample(window, panel);
+            requestSample(window, panel, &it->lastRepaint);
         }
         return false;
     }
 
     if (it->pending && now < it->giveUp) {
         // Keep the frames coming until the reading has had its ConfirmTime.
-        requestSample(window, panel);
+        requestSample(window, panel, &it->lastRepaint);
     }
 
     *dark = it->dark;
     return true;
 }
 
-void ButtonRenderer::requestSample(KWin::EffectWindow *window, const QRectF &panel)
+void ButtonRenderer::requestSample(
+    KWin::EffectWindow *window, const QRectF &panel,
+    std::chrono::steady_clock::time_point *lastRepaint)
 {
     if (!KWin::effects || !window) {
         return;
+    }
+    const Clock::time_point now = Clock::now();
+    if (lastRepaint && *lastRepaint != Clock::time_point{}
+        && now - *lastRepaint < WatchInterval) {
+        return;
+    }
+    if (lastRepaint) {
+        *lastRepaint = now;
     }
     const QRectF frame = window->frameGeometry();
     // The band the tint is read from: the panel's rows, across the window's

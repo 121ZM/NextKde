@@ -193,12 +193,13 @@ private:
                  const KWin::Region &deviceRegion,
                  bool *dark);
 
-    // Ask the compositor for one more frame over the band the tint is read
-    // from. Nothing damages a window on our behalf, so without this a read that
-    // comes back unusable -- or one that still needs checking -- would only be
-    // made again when the application happens to repaint, which for an idle
-    // window is never, and the panel would never appear.
-    static void requestSample(KWin::EffectWindow *window, const QRectF &panel);
+    // Ask the compositor for another frame over the sampled band, at most once
+    // per sample interval. Nothing damages a window on our behalf, so without
+    // this a read that comes back unusable -- or one that still needs checking
+    // -- would only be made again when the application happens to repaint,
+    // which for an idle window is never, and the panel would never appear.
+    static void requestSample(KWin::EffectWindow *window, const QRectF &panel,
+                              std::chrono::steady_clock::time_point *lastRepaint);
 
     // The geometry the window's panel is drawn with: the draft while one is
     // being adjusted, otherwise the configuration's.
@@ -265,6 +266,10 @@ private:
         // ButtonRenderer::tintFor. Also what the interval is measured from
         // while the entry is settled and nothing needs confirming.
         Clock::time_point lastRead{};
+        // Repaint requests are separately rate-limited. Without this, every
+        // paint during tint confirmation schedules another paint, even though
+        // the next useful read cannot happen for 100 ms.
+        Clock::time_point lastRepaint{};
         // Deadline for asking the compositor for frames of this effect's own
         // while the entry has no settled tint. Reset when the reading that is
         // being watched changes, so the budget is spent on arriving at one
