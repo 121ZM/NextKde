@@ -534,6 +534,10 @@ function publishAction(command, found) {
         type: "action",
         action: String(command.action || ""),
         id: normalizeId(command.id),
+        // Shell-generated correlation id (e.g. engage-swap tickets). Absent
+        // on commands that don't set one; round35 NEW-2 wires a consumer for
+        // failed engage-swap receipts so a stuck engaging card can reset.
+        ticket: command.ticket || undefined,
         found: found
     }));
 }
@@ -895,7 +899,8 @@ commandTimer.timeout.connect(function() {
         if (command)
             print("[QuickshellWindowBridge] polling callback received command");
         handleCommand(command);
-        // Drain the queue immediately instead of one command per tick.
+        // Restart the 50 ms repeating timer so the next poll starts a fresh
+        // interval (commands still process one per tick; see commandTimer).
         if (command)
             commandTimer.restart();
     });
