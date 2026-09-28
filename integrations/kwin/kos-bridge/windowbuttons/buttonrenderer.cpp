@@ -1069,12 +1069,16 @@ QImage ButtonRenderer::buildPanel(const QSizeF &panelSize, bool active, bool dar
         painter.setBrush(dotColor(type, active));
         painter.drawEllipse(disc);
 
-        // The inward restore arrows each occupy less than half their box. Give
-        // that state a wider box so its wedges remain legible at the default
-        // 14-pixel button size, while keeping a gap between their tips.
-        const qreal inset = size * (type == Close ? 0.34
-                                    : type == Maximize && maximized ? 0.12
-                                    : 0.28);
+        // The two maximize states use different box sizes so their triangular
+        // arrows have the same visible leg length, about 6 px in a 14 px dot.
+        // The restore pair needs almost the full disc to do that without its
+        // inward-pointing arrows touching in the middle.
+        qreal inset = size * 0.28;
+        if (type == Close) {
+            inset = size * 0.34;
+        } else if (type == Maximize) {
+            inset = size * (maximized ? 0.035 : 0.20);
+        }
         const QRectF glyph = disc.adjusted(inset, inset, -inset, -inset);
 
         QPen pen(QColor(0, 0, 0, 0xA0));
@@ -1094,7 +1098,7 @@ QImage ButtonRenderer::buildPanel(const QSizeF &panelSize, bool active, bool dar
             break;
         case Maximize: {
             painter.setPen(Qt::NoPen);
-            painter.setBrush(QColor(0, 0, 0, 0xA0));
+            painter.setBrush(QColor(0, 0, 0, 0xC0));
 
             // The arm is a fraction of the glyph box, and the two states cannot
             // share one. Each wedge is a right triangle whose legs run along two
