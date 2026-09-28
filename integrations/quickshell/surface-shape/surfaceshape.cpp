@@ -7,10 +7,26 @@
 #include <QtGui/qguiapplication_platform.h>
 #include <QQuickItem>
 #include <QQuickWindow>
-#include <QTimer>
 #include <QtGui/qpa/qplatformwindow_p.h>
 #include <algorithm>
 #include <wayland-client-core.h>
+
+// Polish runs on the GUI thread after animations/layout and before the scene
+// graph is synchronized. A zero-timeout callback can run after that frame's
+// wl_surface.commit, leaving Glass with the previous geometry and scrim while
+// the new blur region/content is already on screen.
+class SurfaceShapeSyncItem : public QQuickItem
+{
+public:
+    SurfaceShapeSyncItem(SurfaceShape *shape, QQuickItem *parent)
+        : QQuickItem(parent), m_shape(shape) {}
+
+protected:
+    void updatePolish() override { m_shape->sync(); }
+
+private:
+    SurfaceShape *m_shape;
+};
 
 namespace
 {
@@ -135,6 +151,7 @@ SurfaceShape::SurfaceShape(QObject *parent)
 
 SurfaceShape::~SurfaceShape()
 {
+    delete m_syncItem;
     releaseShape();
     disconnectAncestors();
 }
@@ -263,9 +280,14 @@ void SurfaceShape::handleWindowChanged(QQuickWindow *window)
 {
     if (m_window == window) { scheduleSync(); return; }
     if (m_window) m_window->removeEventFilter(this);
+    delete m_syncItem;
+    m_syncPending = false;
     releaseShape();
     m_window = window;
-    if (m_window) m_window->installEventFilter(this);
+    if (m_window) {
+        m_window->installEventFilter(this);
+        m_syncItem = new SurfaceShapeSyncItem(this, m_window->contentItem());
+    }
     rewireAncestors();
 }
 
@@ -285,9 +307,9 @@ wl_surface *SurfaceShape::nativeSurface() const
 
 void SurfaceShape::scheduleSync()
 {
-    if (m_syncPending) return;
+    if (m_syncPending || !m_syncItem) return;
     m_syncPending = true;
-    QTimer::singleShot(0, this, &SurfaceShape::sync);
+    m_syncItem->polish();
 }
 
 void SurfaceShape::sync()
