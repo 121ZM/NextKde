@@ -111,10 +111,6 @@ function parkWindow(window, on) {
     }
 }
 
-workspace.windowRemoved.connect(function(window) {
-    delete parkedGeometry[windowId(window)];
-});
-
 function propertyValue(window, name, fallback) {
     try {
         const value = window[name];
@@ -946,6 +942,12 @@ workspace.windowAdded.connect(function(window) {
     watchWindow(window);
     scheduleInitialPlacement(window);
     scheduleSnapshot();
+});
+// 停泊档案随窗销毁清理（原写在纯函数区——测试用 "Runtime-dependent
+// bridge helpers" 标记切走 workspace 依赖段，顶层 connect 在标记前会让
+// window-placement 测试 ReferenceError，自停泊落地起一直红着）
+workspace.windowRemoved.connect(function(window) {
+    delete parkedGeometry[windowId(window)];
 });
 workspace.windowRemoved.connect(scheduleSnapshot);
 workspace.windowActivated.connect(scheduleSnapshot);

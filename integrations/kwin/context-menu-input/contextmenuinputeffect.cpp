@@ -54,7 +54,9 @@ ContextMenuInputEffect::ContextMenuInputEffect()
 {
     QDBusConnection::sessionBus().registerObject(
         QStringLiteral("/KOSContextMenuInput"), this,
-        QDBusConnection::ExportAllSlots);
+        // 只导出 Q_SCRIPTABLE 业务槽：ExportAllSlots 连 deleteLater 一起导
+        // 给会话总线（任意进程可打死特效，见头注释）
+        QDBusConnection::ExportScriptableSlots);
     m_pointerSpy = std::make_unique<ContextMenuPointerSpy>(this);
     installPointerSpy();
 }

@@ -318,7 +318,13 @@ void SurfaceShape::sync()
     if (!m_target || !m_window) { releaseShape(); return; }
     wl_surface *surface = nativeSurface();
     auto *manager = ShapeProtocol::instance().manager();
-    if (!surface || !manager) return;
+    // 早退也要释放旧 shape 代理：窗口销毁中途 surface 变 null 时它仍指向
+    // 旧 surface（active 属性也保持与实际不符），到下次变更才被释放
+    if (!surface) {
+        releaseShape();
+        return;
+    }
+    if (!manager) return;
     if (surface != m_surface) {
         releaseShape();
         m_surface = surface;

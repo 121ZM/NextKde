@@ -20,7 +20,11 @@ def read(name):
 compat_core = read("compat_core.glsl")
 oklab = read("oklab.glsl")
 
-glass = read("glass.glsl")
+# glass.glsl 内部还 include 了 snells-glass.glsl——CMake 真实链路会先展开
+# 它（src/CMakeLists 的 GLASS_SHADER 两步 replace）；漏掉这步会把带无法
+# 解析 include 的坏着色器写进 generated/，且旧自检查不出来
+snells = read("snells-glass.glsl")
+glass = read("glass.glsl").replace('#include "snells-glass.glsl"', snells)
 
 src = read("onscreen_rounded.glsl")
 expanded = src.replace('#include "oklab.glsl"', oklab)
@@ -32,10 +36,13 @@ print(f"wrote {out} ({len(compat_core + expanded)} bytes)")
 
 # Sanity checks
 checks = {
-    "circleMap lens profile": "circleMap" in expanded,
+    # 断言锚点须跟现行着色器符号一致：circleMap/cornerWeight 是旧代
+    # 符号（早就不在源里），坏锚点让自检永远红、真回归反而被淹没
+    "snells lens profile": "processSnellSample" in expanded,
     "analytic gradient gradSdRoundedBox": "gradSdRoundedBox" in expanded,
-    "corner-weighted dispersion": "cornerWeight" in expanded,
+    "soft material pass": "applySoftMaterial" in expanded,
     "glass.glsl expanded (no bare include)": '#include "glass' not in expanded,
+    "snells-glass.glsl expanded": '#include "snells' not in expanded,
     "sdf.glsl include kept": '#include "sdf.glsl"' in expanded,
 }
 for name, ok in checks.items():

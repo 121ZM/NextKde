@@ -45,9 +45,11 @@ public:
     static bool supported();
 
 public Q_SLOTS:
-    void updateTargets(const QString &payload);
-    bool prepareLaunch(const QString &payload);
-    QString status() const;
+    // Q_SCRIPTABLE：ExportScriptableSlots 只导业务槽（ExportAllSlots 会
+    // 把继承的 QObject::deleteLater 一并导给会话总线）
+    Q_SCRIPTABLE void updateTargets(const QString &payload);
+    Q_SCRIPTABLE bool prepareLaunch(const QString &payload);
+    Q_SCRIPTABLE QString status() const;
 
 Q_SIGNALS:
     void animationStarted(const QString &appId, const QString &windowId,

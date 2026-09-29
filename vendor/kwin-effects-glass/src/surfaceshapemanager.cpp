@@ -105,7 +105,10 @@ void SurfaceShapeManager::getShape(wl_client *client, wl_resource *resource,
     shape->manager = manager;
     shape->surface = surface;
     shape->value.id = manager->m_nextId++;
-    shape->resource = wl_resource_create(client, &kos_surface_shape_v1_interface, 4, id);
+    // shape 资源版本跟随 manager 资源的实际协商版本（bind 侧已 min(version,4)）
+    // ——写死 4 会让 v1 客户端拿到标成 v4 的资源，将来按版本门控全失真
+    shape->resource = wl_resource_create(client, &kos_surface_shape_v1_interface,
+                                          wl_resource_get_version(resource), id);
     wl_resource_set_implementation(shape->resource, &s_shapeImplementation, shape,
                                    destroyShapeResource);
     shape->surfaceDestroyed = connect(surface, &QObject::destroyed, manager,
