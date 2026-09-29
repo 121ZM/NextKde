@@ -30,6 +30,9 @@ namespace
 {
 // Supersampling factor used when rasterising the panel image.
 constexpr int Supersample = 4;
+// Bound textures created by repeated panel size/spacing adjustments. These
+// are GPU uploads kept for reuse, not per-window resources.
+constexpr qsizetype MaxTextureCacheBytes = 16 * 1024 * 1024;
 // How long a reading of the title bar has to hold before it displaces the tint
 // already on screen.
 //
@@ -91,8 +94,11 @@ bool exposedAt(KWin::EffectWindow *window, const QPointF &point)
         if (!above || !above->isVisible()) {
             continue;
         }
-        // Transparent shell surfaces report opacity 1.0 but must not occlude.
-        if (above->opacity() < 1.0 || above->isSkipSwitcher() || above->isDesktop()) {
+        // Keep hit testing aligned with BridgeEffect::visibleRegionFor.
+        // Skip-switcher shell surfaces may have transparent frames spanning
+        // the desktop; ordinary translucent windows still occlude the panel.
+        if (above->isSkipSwitcher() || above->isDesktop() || above->isDock()
+            || above->isOnScreenDisplay() || above->isNotification()) {
             continue;
         }
         if (above->frameGeometry().contains(point)) {
@@ -814,12 +820,25 @@ KWin::GLTexture *ButtonRenderer::panelTexture(const QSizeF &panelSize, bool acti
                             .arg(maximized ? 1 : 0);
     auto it = m_textures.find(key);
     if (it == m_textures.end()) {
-        auto texture = KWin::GLTexture::upload(
-            buildPanel(panelSize, active, dark, geometry, hovered, adjusting,
-                       maximized));
-        it = m_textures.emplace(key, std::move(texture)).first;
+        return cacheTexture(key, buildPanel(panelSize, active, dark, geometry,
+                                            hovered, adjusting, maximized));
     }
     return it->second.get();
+}
+
+KWin::GLTexture *ButtonRenderer::cacheTexture(const QString &key, QImage image)
+{
+    const qsizetype bytes = image.sizeInBytes();
+    if (m_textureBytes + bytes > MaxTextureCacheBytes) {
+        m_textures.clear();
+        m_textureBytes = 0;
+    }
+    auto texture = KWin::GLTexture::upload(image);
+    if (!texture) {
+        return nullptr;
+    }
+    m_textureBytes += bytes;
+    return m_textures.emplace(key, std::move(texture)).first->second.get();
 }
 
 void ButtonRenderer::setHovered(KWin::EffectWindow *window, Action action)
@@ -1049,114 +1068,24 @@ QImage ButtonRenderer::buildPanel(const QSizeF &panelSize, bool active, bool dar
         }
     }
 
-    const qreal size = geometry.buttonSize;
     for (int i = 0; i < TypeCount; ++i) {
         const Type type = typeAt(i);
         const QRectF disc = dotRect(panelSize, geometry, i);
 
-        const bool isHovered = actionFor(type) == hovered;
-
-        if (isHovered) {
-            // Hover: a contrasting ring around the dot.
+        // Hover: a contrasting ring around the dot. Drawn here rather than in
+        // drawLight(), which knows nothing about the pointer: the ring is an
+        // affordance of this panel and takes its colour from the panel's own
+        // tint, while the light under it is the same light in every panel.
+        if (actionFor(type) == hovered) {
             const QColor ring = dark ? QColor(255, 255, 255, 0xE0)
                                      : QColor(30, 30, 30, 0xB0);
-            painter.setPen(QPen(ring, std::max(1.0, size * 0.11)));
+            painter.setPen(QPen(ring,
+                                std::max(1.0, geometry.buttonSize * 0.11)));
             painter.setBrush(Qt::NoBrush);
             painter.drawEllipse(disc.adjusted(-2.5, -2.5, 2.5, 2.5));
         }
 
-        painter.setPen(QPen(QColor(0, 0, 0, 0x33), 0.75));
-        painter.setBrush(dotColor(type, active));
-        painter.drawEllipse(disc);
-
-        // The two maximize states use different box sizes so their triangular
-        // arrows have the same visible leg length, about 6 px in a 14 px dot.
-        // The restore pair needs almost the full disc to do that without its
-        // inward-pointing arrows touching in the middle.
-        qreal inset = size * 0.28;
-        if (type == Close) {
-            inset = size * 0.34;
-        } else if (type == Maximize) {
-            inset = size * (maximized ? 0.035 : 0.20);
-        }
-        const QRectF glyph = disc.adjusted(inset, inset, -inset, -inset);
-
-        QPen pen(QColor(0, 0, 0, 0xA0));
-        pen.setWidthF(size * 0.11);
-        pen.setCapStyle(Qt::RoundCap);
-        painter.setPen(pen);
-        painter.setBrush(Qt::NoBrush);
-
-        switch (type) {
-        case Close:
-            painter.drawLine(glyph.topLeft(), glyph.bottomRight());
-            painter.drawLine(glyph.topRight(), glyph.bottomLeft());
-            break;
-        case Minimize:
-            painter.drawLine(QPointF(glyph.left(), glyph.center().y()),
-                              QPointF(glyph.right(), glyph.center().y()));
-            break;
-        case Maximize: {
-            painter.setPen(Qt::NoPen);
-            painter.setBrush(QColor(0, 0, 0, 0xC0));
-
-            // The arm is a fraction of the glyph box, and the two states cannot
-            // share one. Each wedge is a right triangle whose legs run along two
-            // edges of the box: outward (not maximized) the right angle sits on
-            // the corner and the wedge fills it, inward (maximized) the right
-            // angle sits `arm` in from the corner and the wedge fills the part
-            // nearer the centre instead.
-            //
-            // That puts the two states on opposite sides of the same inequality,
-            // and only one of them stays disjoint across the whole range. Let
-            // `side` be the box and take the diagonal x + y. Outward, the wedges
-            // are x + y <= arm and x + y >= 2 * side - arm: they never meet, for
-            // any arm at all. Inward they are x + y >= arm and x + y <=
-            // 2 * side - arm, which meet the moment the arm passes the box's
-            // centre -- and at the 0.72 the two states used to share, both
-            // wedges covered the middle, overlapped by half their own ink, and
-            // rendered as one solid mass with no readable shape. 0.46 is inside
-            // the disjoint range with a visible gap; at 0.50 they touch at a
-            // single point and read as one mark again.
-            const qreal armX = glyph.width() * (maximized ? 0.46 : 0.72);
-            const qreal armY = glyph.height() * (maximized ? 0.46 : 0.72);
-
-            // Two wedges on the diagonal, and the two states are the two halves
-            // of the same pair of squares: not maximized they fill the outer
-            // corners and point out of the button, maximized they point at each
-            // other instead. Which one is drawn is decided by what clicking the
-            // dot would do, so the mark is the same statement the button makes
-            // -- an "expand" arrow left on a window that is already maximized
-            // would be pointing at a state the window is in.
-            QPainterPath tl;
-            QPainterPath br;
-            if (maximized) {
-                tl.moveTo(glyph.left() + armX, glyph.top());
-                tl.lineTo(glyph.left(), glyph.top() + armY);
-                tl.lineTo(glyph.left() + armX, glyph.top() + armY);
-
-                br.moveTo(glyph.right() - armX, glyph.bottom());
-                br.lineTo(glyph.right(), glyph.bottom() - armY);
-                br.lineTo(glyph.right() - armX, glyph.bottom() - armY);
-            } else {
-                tl.moveTo(glyph.topLeft());
-                tl.lineTo(glyph.left() + armX, glyph.top());
-                tl.lineTo(glyph.left(), glyph.top() + armY);
-
-                br.moveTo(glyph.bottomRight());
-                br.lineTo(glyph.right() - armX, glyph.bottom());
-                br.lineTo(glyph.right(), glyph.bottom() - armY);
-            }
-            tl.closeSubpath();
-            br.closeSubpath();
-
-            painter.drawPath(tl);
-            painter.drawPath(br);
-            break;
-        }
-        default:
-            break;
-        }
+        drawLight(painter, disc, type, active, maximized);
     }
 
     painter.end();
@@ -1178,8 +1107,7 @@ KWin::GLTexture *ButtonRenderer::tileMenuTexture(bool dark,
                             .arg(hovered ? static_cast<int>(*hovered) : -1);
     auto it = m_textures.find(key);
     if (it == m_textures.end()) {
-        auto texture = KWin::GLTexture::upload(buildTileMenu(dark, hovered));
-        it = m_textures.emplace(key, std::move(texture)).first;
+        return cacheTexture(key, buildTileMenu(dark, hovered));
     }
     return it->second.get();
 }
@@ -1225,24 +1153,7 @@ QImage ButtonRenderer::buildTileMenu(bool dark,
     return image;
 }
 
-QColor ButtonRenderer::dotColor(Type type, bool active)
-{
-    if (!active) {
-        return QColor(0x9a, 0x9a, 0x9e);
-    }
-    switch (type) {
-    case Close: return QColor(0xff, 0x5f, 0x57);
-    case Minimize: return QColor(0xfe, 0xbc, 0x2e);
-    case Maximize: return QColor(0x28, 0xc8, 0x40);
-    // Not a light, the sentinel the loops count to. Named rather than left to a
-    // `default:` so that a fourth light is a warning here rather than a colour
-    // nobody chose.
-    case TypeCount: break;
-    }
-    return QColor(0x9a, 0x9a, 0x9e);
-}
-
-ButtonRenderer::Type ButtonRenderer::typeAt(int index)
+Type ButtonRenderer::typeAt(int index)
 {
     // Which light sits in each of the three positions, left to right. The
     // colours, the glyphs, the hit-testing and the actions all follow this, so

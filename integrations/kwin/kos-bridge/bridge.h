@@ -30,7 +30,8 @@ public:
 
 private:
     KWin::Region visibleRegionFor(KWin::EffectWindow *window,
-                                  const KWin::RenderViewport &viewport) const;
+                                  const KWin::RenderViewport &viewport,
+                                  const KWin::Region &deviceRegion) const;
 
     std::unique_ptr<ButtonRenderer> m_renderer;
     std::unique_ptr<ButtonConfig> m_config;

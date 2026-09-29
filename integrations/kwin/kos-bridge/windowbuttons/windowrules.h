@@ -1,6 +1,7 @@
 #pragma once
 
 #include <QJsonObject>
+#include <QRegularExpression>
 #include <QString>
 #include <QVector>
 
@@ -36,6 +37,10 @@ struct WindowMatcher {
     QString role;
     bool hasType = false;
     int type = 0;
+    // Rules are matched during painting. Keep the compiled expression across
+    // frames; pattern comparison also handles matchers built by callers that
+    // assign titleRegex directly.
+    mutable QRegularExpression compiledTitleRegex;
 
     bool matches(const WindowQuery &) const;
     // A matcher that constrains nothing would match every window, which is never

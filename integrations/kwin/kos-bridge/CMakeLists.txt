@@ -25,6 +25,7 @@ add_library(kos_bridge MODULE
     bridge.cpp
     main.cpp
     windowbuttons/adjustsession.cpp
+    windowbuttons/buttonglyph.cpp
     windowbuttons/buttonrenderer.cpp
     windowbuttons/buttonconfig.cpp
     windowbuttons/buttoninput.cpp
@@ -40,6 +41,32 @@ target_link_libraries(kos_bridge PRIVATE
     KF6::ConfigCore
     KWin::kwin
 )
+
+# Offline preview of the window-button panel. The lights are pure QPainter
+# geometry over a rectangle (see windowbuttons/buttonglyph.h), so the whole panel
+# can be rendered without a compositor -- which is the point: the alternative is
+# to build the effect, install it to /usr, and restart KWin, and KWin restarting
+# takes every Wayland client with it. Hot-loading a replaced plugin .so is the
+# operation that has crashed KWin before, so it is not an option either.
+#
+#   cmake -S . -B build -DKOS_BRIDGE_BUILD_PREVIEW=ON
+#   cmake --build build --target glyph_preview
+#   QT_QPA_PLATFORM=offscreen build/glyph_preview /tmp/panel.png
+#
+# Off by default so packaging builds stay lean.
+option(KOS_BRIDGE_BUILD_PREVIEW "Build the offline window-button panel preview" OFF)
+if(KOS_BRIDGE_BUILD_PREVIEW)
+    add_executable(glyph_preview
+        preview/glyph_preview.cpp
+        windowbuttons/buttonglyph.cpp
+        windowbuttons/panelgeometry.cpp
+    )
+    # Qt6::Gui and nothing else: no KWin, no KF6, no DBus. If this target ever
+    # needs one of those, the light drawing has picked up a dependency it should
+    # not have and the preview has stopped being able to answer the question it
+    # exists to answer.
+    target_link_libraries(glyph_preview PRIVATE Qt6::Gui)
+endif()
 
 # Offline harness for the title-bar scan. The scan is pure geometry over a
 # pixel block, so it can be checked against synthetic title bars without a

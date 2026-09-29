@@ -117,6 +117,16 @@ void BridgeEffect::drawWindow(const KWin::RenderTarget &renderTarget,
         return;
     }
 
+    // These are already rejected by ButtonRenderer::paint. Skip the rule
+    // lookup and stacking-order walk for them as well; shell and popup
+    // surfaces can repaint frequently while never having a button panel.
+    if (!window->isVisible() || !window->isManaged()
+        || (!window->isNormalWindow() && !window->isDialog())
+        || window->isSkipSwitcher() || window->isSpecialWindow()) {
+        m_renderer->clearHits(window);
+        return;
+    }
+
     // `deviceRegion` is the part of this window that is actually visible: the
     // compositor has already subtracted every opaque window stacked above it
     // (see WorkspaceScene::paintSimpleScreen). Drawing the panel clipped to
@@ -136,9 +146,7 @@ void BridgeEffect::drawWindow(const KWin::RenderTarget &renderTarget,
     // only culls on its optimised painting path; on the generic path (used
     // whenever any window is transformed) deviceRegion is the whole screen, so
     // relying on it alone lets a lower window's panel show through an upper one.
-    KWin::Region clip = deviceRegion;
-    const KWin::Region visible = visibleRegionFor(window, viewport);
-    clip = (deviceRegion == KWin::Region::infinite()) ? visible : (clip & visible);
+    const KWin::Region clip = visibleRegionFor(window, viewport, deviceRegion);
     if (clip.isEmpty()) {
         // Nothing of this window is on screen, so nothing of its panel is
         // either.
@@ -157,27 +165,37 @@ void BridgeEffect::drawWindow(const KWin::RenderTarget &renderTarget,
 }
 
 KWin::Region BridgeEffect::visibleRegionFor(KWin::EffectWindow *window,
-                                            const KWin::RenderViewport &viewport) const
+                                            const KWin::RenderViewport &viewport,
+                                            const KWin::Region &deviceRegion) const
 {
-    const auto windows = KWin::effects->stackingOrder();
-    const int index = windows.indexOf(window);
-    if (index < 0) {
-        return KWin::Region();
-    }
-
     const auto toRegion = [&](KWin::EffectWindow *w) {
         const KWin::Rect r = viewport.mapToDeviceCoordinatesAligned(w->frameGeometry());
         return KWin::Region(r.x(), r.y(), r.width(), r.height());
     };
 
     KWin::Region visible = toRegion(window);
+    if (deviceRegion != KWin::Region::infinite()) {
+        visible &= deviceRegion;
+    }
+    if (visible.isEmpty()) {
+        return visible;
+    }
+
+    const auto windows = KWin::effects->stackingOrder();
+    const int index = windows.indexOf(window);
+    if (index < 0) {
+        return KWin::Region();
+    }
     for (int j = index + 1; j < windows.size() && !visible.isEmpty(); ++j) {
         KWin::EffectWindow *above = windows[j];
         if (!above || !above->isVisible()) {
             continue;
         }
-        // Transparent shell surfaces report opacity 1.0 but must not occlude.
-        if (above->opacity() < 1.0 || above->isSkipSwitcher() || above->isDesktop()) {
+        // Skip-switcher shell surfaces can have a large transparent frame.
+        // Treating that whole frame as opaque hides every panel underneath.
+        // Ordinary translucent application windows still occlude the panel.
+        if (above->isSkipSwitcher() || above->isDesktop() || above->isDock()
+            || above->isOnScreenDisplay() || above->isNotification()) {
             continue;
         }
         visible = visible.subtracted(toRegion(above));

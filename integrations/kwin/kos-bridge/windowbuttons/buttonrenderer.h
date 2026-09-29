@@ -1,6 +1,5 @@
 #pragma once
 
-#include <QColor>
 #include <QHash>
 #include <QImage>
 #include <QObject>
@@ -14,6 +13,7 @@
 #include <memory>
 #include <optional>
 
+#include "buttonglyph.h"
 #include "titlebarmetrics.h"
 #include "tilemenu.h"
 
@@ -167,14 +167,13 @@ public:
     void invalidateAll();
 
 private:
-    enum Type { Close = 0, Minimize = 1, Maximize = 2, TypeCount = 3 };
-
     // The light drawn in each of the three positions, left to right. `Type` is
     // what a light *is* -- its colour, its glyph, the action it performs -- and
     // where it sits is a separate decision, so the order lives in this one
     // function and nowhere else: the same three lights can be laid out in any
     // order without touching the colours, the glyphs, the hit-testing or the
-    // actions.
+    // actions. The lights themselves are drawn by buttonglyph.h, which owns
+    // everything about one light and nothing about where it goes.
     static Type typeAt(int index);
     // The action a light performs. The inverse of nothing: `typeAt` says where a
     // light is, this says what it does.
@@ -219,6 +218,7 @@ private:
     KWin::GLTexture *panelTexture(const QSizeF &panelSize, bool active, bool dark,
                                   const PanelGeometry &geometry, Action hovered,
                                   bool adjusting, bool maximized);
+    KWin::GLTexture *cacheTexture(const QString &key, QImage image);
     QImage buildPanel(const QSizeF &panelSize, bool active, bool dark,
                       const PanelGeometry &geometry, Action hovered,
                       bool adjusting, bool maximized) const;
@@ -233,14 +233,13 @@ private:
     static void blit(const KWin::RenderViewport &viewport, const KWin::Region &clip,
                      const QRectF &logicalRect, KWin::GLTexture *texture);
 
-    static QColor dotColor(Type type, bool active);
-
     // The light that opens the tiling menu: the one that performs Action::Maximize.
     // Found through typeAt() so that reordering the panel moves the menu's
     // anchor with the light it belongs to.
     static int zoomDotIndex();
 
     std::map<QString, std::unique_ptr<KWin::GLTexture>> m_textures;
+    qsizetype m_textureBytes = 0;
 
     // Times are read against this clock, which does not jump when the wall
     // clock does.

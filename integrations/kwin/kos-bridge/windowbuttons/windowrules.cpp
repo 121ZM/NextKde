@@ -144,9 +144,11 @@ bool WindowMatcher::matches(const WindowQuery &query) const
     }
 
     if (!titleRegex.isEmpty()) {
-        const QRegularExpression expression(titleRegex);
-        if (!expression.isValid()
-            || !expression.match(query.caption).hasMatch()) {
+        if (compiledTitleRegex.pattern() != titleRegex) {
+            compiledTitleRegex = QRegularExpression(titleRegex);
+        }
+        if (!compiledTitleRegex.isValid()
+            || !compiledTitleRegex.match(query.caption).hasMatch()) {
             return false;
         }
     }
@@ -237,9 +239,8 @@ WindowMatcher WindowMatcher::fromJson(const QJsonObject &object, bool *ok)
     matcher.title = object["title"].toString();
     matcher.role = object["role"].toString();
 
-    // The regular expression is only compiled when a window is matched against
-    // it, but an invalid one is rejected here, where it can still be reported
-    // against the rule that carries it.
+    // Reject invalid expressions while the rule can still be identified, and
+    // retain the compiled form for repeated matches during painting.
     const QString regex = object["titleRegex"].toString();
     if (!regex.isEmpty()) {
         const QRegularExpression expression(regex);
@@ -250,6 +251,7 @@ WindowMatcher WindowMatcher::fromJson(const QJsonObject &object, bool *ok)
             return matcher;
         }
         matcher.titleRegex = regex;
+        matcher.compiledTitleRegex = expression;
     }
 
     const QString type = object["type"].toString();
