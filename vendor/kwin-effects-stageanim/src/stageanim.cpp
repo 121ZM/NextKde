@@ -56,7 +56,6 @@ static constexpr qreal kDefaultGlassOpacity = 0.65; // 飞行玻璃透明度默�
 struct StageTarget
 {
     QString id; // KWin internalId（无花括号），与 shell windowId 逐字一致
-    int pid;
     QRect rect;
 };
 
@@ -78,6 +77,18 @@ static QVector<StageTarget> loadTargets()
     if (!f.open(QIODevice::ReadOnly))
         return out;
     const auto doc = QJsonDocument::fromJson(f.readAll());
+    if (doc.isNull()) {
+        // 坏 JSON（半截写入/磁盘问题）与"shell 未运行（文件不存在）"要
+        // 区分得开：前者是故障信号，静默回落会掩盖排障线索。只告警一次
+        // ——本函数逐事件调用，坏文件常驻时不能刷屏
+        static bool warnedBadJson = false;
+        if (!warnedBadJson) {
+            warnedBadJson = true;
+            qCWarning(STAGEANIM_LOG,
+                "stage-targets.json exists but is not valid JSON");
+        }
+        return out;
+    }
     const auto arr = doc.object().value(QStringLiteral("targets")).toArray();
     out.reserve(arr.size());
     for (const auto &v : arr) {
@@ -90,7 +101,6 @@ static QVector<StageTarget> loadTargets()
             continue;
         StageTarget t;
         t.id = o.value(QStringLiteral("id")).toString();
-        t.pid = o.value(QStringLiteral("pid")).toInt();
         t.rect = r;
         out.append(t);
     }
@@ -152,7 +162,12 @@ void StageAnimEffect::reconfigure(ReconfigureFlags)
         ? QRect(x, y, w, h)
         : QRect();
 
-    m_tiltAngle = grp.readEntry<double>("TiltAngle", 22.0);
+    // 倾角钳位（对比下方 GlassOpacity）：透视深度 depth = (pivotX − sx)
+    // ·sinR 随角变大，k = focal / (focal − depth)——大屏宽 × 45° 时 depth
+    // ≈900 恰好触焦，>45° 远缘 focal−depth 变负、k 翻负号，顶点镜像翻转
+    // 窗口绘制炸裂。40° 封顶时 1272px 半宽 depth≈818 < focal(900) 恒安全。
+    m_tiltAngle = std::clamp(grp.readEntry<double>("TiltAngle", 22.0),
+                             0.0, 40.0);
 
     // 飞行玻璃透明度：1.0 = 关闭（全程不透明），越低越"玻璃"
     //（飞行途中透见桌面，落地/装卡端由 fade 尾巴收掉）
@@ -163,7 +178,8 @@ void StageAnimEffect::reconfigure(ReconfigureFlags)
     m_trace = grp.readEntry<bool>("TraceTargets", false);
 
     // 缓动曲线可配（kwinrc EasingCurve，默认 OutCubic 无阻尼）
-    const QString curve = grp.readEntry<QString>("EasingCurve", QStringLiteral("OutCubic"));    if (curve == QLatin1String("InOutCubic"))
+    const QString curve = grp.readEntry<QString>("EasingCurve", QStringLiteral("OutCubic"));
+    if (curve == QLatin1String("InOutCubic"))
         m_easing.setType(QEasingCurve::InOutCubic);
     else if (curve == QLatin1String("OutBack"))
         m_easing.setType(QEasingCurve::OutBack);

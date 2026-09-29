@@ -20,7 +20,7 @@ struct StageAnimAnimation
 {
     EffectWindowVisibleRef visibleRef;
     TimeLine timeLine;
-    // 每窗目标（shell 按窗口 pid 发布的卡片矩形）；无效 = 全局/回落逻辑
+    // 每窗目标（shell 按 KWin internalId 发布的卡片矩形）；无效 = 全局/回落
     QRect target;
     qreal endScale = -1.0;
 };

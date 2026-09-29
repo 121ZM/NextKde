@@ -48,24 +48,27 @@ function takeParkedGeometry(window) {
 
 // 应用复位：有档案写档案；无档案却在屏幕外（档案被清/迟到的停泊拽走过）
 // 拉回工作区内——否则激活时 KWin 只把它钳到右缘窄条，窗口"飞到最右看不见"
+// ⚠️ 整体捕获：调用点在 activate-group/engage-swap 的激活后循环里无守卫，
+// 窗口在间隙销毁时 frameGeometry 读抛会把整条命令的 publishAction +
+// scheduleSnapshot 一起跳过（无回执 + 快照停更到下个窗口事件）
 function applyRestore(window, geo) {
-    if (geo) {
-        window.frameGeometry = geo;
-        return;
-    }
-    const stranded = window.frameGeometry;
-    if (stranded.x > PARK_OFFSCREEN_X) {
-        try {
+    try {
+        if (geo) {
+            window.frameGeometry = geo;
+            return;
+        }
+        const stranded = window.frameGeometry;
+        if (stranded.x > PARK_OFFSCREEN_X) {
             window.frameGeometry = {
                 x: 300, y: stranded.y,
                 width: stranded.width, height: stranded.height
             };
             print("[QuickshellWindowBridge] unpark heal id=" + windowId(window)
                   + " x=" + stranded.x + " -> 300");
-        } catch (error) {
-            print("[QuickshellWindowBridge] unpark heal failed id="
-                  + windowId(window) + " error=" + error);
         }
+    } catch (error) {
+        print("[QuickshellWindowBridge] applyRestore failed id="
+              + windowId(window) + " error=" + error);
     }
 }
 
@@ -741,7 +744,9 @@ function handleCommand(serialized) {
             applyRestore(restores[r].window, restores[r].geo);
         print("[QuickshellWindowBridge] activate-group restored=" + restored
               + " focused=" + (focused ? 1 : 0));
-        publishAction(command, true);
+        // 回执 = 真实结果：全部 findWindow 落空（窗在入队到执行的 50ms
+        // 间隙全关了）必须报 found=false，shell 侧才知道命令没生效
+        publishAction(command, restored > 0);
         scheduleSnapshot();
         return;
     }
@@ -757,6 +762,7 @@ function handleCommand(serialized) {
             ? command.minimizeIds : [];
         const restores = [];
         let focused = null;
+        let restored = 0;
         for (let i = 0; i < actIds.length; i++) {
             const groupWindow = findWindow(actIds[i]);
             if (!groupWindow)
@@ -771,6 +777,7 @@ function handleCommand(serialized) {
                 groupWindow.keepBelow = false;
                 if (geo)
                     restores.push({ window: groupWindow, geo: geo });
+                restored++;
                 if (actIds[i] === command.focusId)
                     focused = groupWindow;
             } catch (error) {
@@ -796,10 +803,12 @@ function handleCommand(serialized) {
                       + " id=" + minIds[m] + " error=" + error);
             }
         }
-        print("[QuickshellWindowBridge] engage-swap restored=" + actIds.length
+        print("[QuickshellWindowBridge] engage-swap restored=" + restored
               + " collected=" + collected
               + " focused=" + (focused ? 1 : 0));
-        publishAction(command, true);
+        // 回执锚在焦点窗：被点组在入队→执行间隙被关掉（focused 落空）=
+        // 交换没发生，shell 侧据此复位 engaging 卡（"卡片消失"自愈）
+        publishAction(command, focused !== null);
         scheduleSnapshot();
         return;
     }
@@ -848,6 +857,13 @@ function handleCommand(serialized) {
             }
         } else if (command.action === "close") {
             window.closeWindow();
+        } else {
+            // 防御缺口：未知 action 拿假成功回执会骗过 shell 侧的状态机
+            //（未来新增 action 拼写不一致时静默失效）
+            print("[QuickshellWindowBridge] unknown action="
+                  + command.action);
+            publishAction(command, false);
+            return;
         }
         print("[QuickshellWindowBridge] command executed action=" + command.action
               + " id=" + windowId(window));
