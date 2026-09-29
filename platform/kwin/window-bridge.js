@@ -813,6 +813,33 @@ function handleCommand(serialized) {
         return;
     }
 
+    if (command.action === "minimize-group") {
+        // 桌面收编/整组退位的原子最小化：N 窗一条命令一个轮询拍内完成。
+        // 逐窗命令按桥 50ms/条排队能把 N 窗收编拖到 N*50ms 之后——比
+        // 显示桌面开关的 400ms 防抖还长，快速第二击会在管线中途插进来
+        //（实测复现：第一击的最小化还没全部落地、第二击已清状态跑恢复，
+        // 用户看到"卡片出现、程序没收回去"）。
+        const ids = Array.isArray(command.ids) ? command.ids : [];
+        let collected = 0;
+        for (let i = 0; i < ids.length; i++) {
+            const demoted = findWindow(ids[i]);
+            if (!demoted)
+                continue;
+            try {
+                demoted.minimized = command.value !== false;
+                collected++;
+            } catch (error) {
+                print("[QuickshellWindowBridge] minimize-group failed"
+                      + " id=" + ids[i] + " error=" + error);
+            }
+        }
+        print("[QuickshellWindowBridge] minimize-group collected=" + collected
+              + " of " + ids.length);
+        publishAction(command, collected > 0);
+        scheduleSnapshot();
+        return;
+    }
+
     const window = findWindow(command.id);
     if (!window) {
         print("[QuickshellWindowBridge] command target missing id=" + command.id);
