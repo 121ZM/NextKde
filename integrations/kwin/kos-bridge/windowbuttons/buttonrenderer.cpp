@@ -504,13 +504,20 @@ void ButtonRenderer::blit(const KWin::RenderViewport &viewport,
         return;
     }
 
-    // Drawing position uses absolute device coordinates (what the projection
-    // matrix expects); clipping and pixel reads use render target coordinates.
+    // The projection matrix takes scaled global coordinates, while damage and
+    // visible regions are in viewport device coordinates. Keep both origins so
+    // a visible piece can be positioned and sampled from the same panel image.
     const qreal scale = viewport.scale();
     const QRectF deviceAbs(logicalRect.topLeft() * scale, logicalRect.size() * scale);
-
-    QMatrix4x4 mvp = viewport.projectionMatrix();
-    mvp.translate(deviceAbs.x(), deviceAbs.y());
+    const QRectF panelDevice = viewport.mapToDeviceCoordinates(logicalRect);
+    if (panelDevice.isEmpty()) {
+        return;
+    }
+    const KWin::Rect panelBounds = panelDevice.toAlignedRect();
+    const KWin::Region visiblePieces = clip & KWin::Region(panelBounds);
+    if (visiblePieces.isEmpty()) {
+        return;
+    }
 
     auto *shaderManager = KWin::ShaderManager::instance();
     // NOTE: do not add ShaderTrait::Modulate here. It changes how the texture's
@@ -519,7 +526,6 @@ void ButtonRenderer::blit(const KWin::RenderViewport &viewport,
     // panel while the window is transformed (see BridgeEffect::drawWindow).
     shaderManager->pushShader(KWin::ShaderTrait::MapTexture);
     KWin::GLShader *shader = shaderManager->getBoundShader();
-    shader->setUniform(KWin::GLShader::Mat4Uniform::ModelViewProjectionMatrix, mvp);
     shader->setUniform(KWin::GLShader::IntUniform::TextureWidth, texture->width());
     shader->setUniform(KWin::GLShader::IntUniform::TextureHeight, texture->height());
 
@@ -541,7 +547,33 @@ void ButtonRenderer::blit(const KWin::RenderViewport &viewport,
     glBlendFuncSeparate(GL_ONE, GL_ONE_MINUS_SRC_ALPHA,
                         GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
 
-    texture->render(clip, deviceAbs.size(), true);
+    // GLTexture's hardware-clipping path needs framebuffer-local scissor
+    // coordinates. The effect's region is in viewport device coordinates, so
+    // feeding it to that path can either ignore the cover or hide the whole
+    // panel. Draw only the visible geometry instead: each rectangle maps to
+    // the corresponding source slice of the cached panel texture.
+    if (visiblePieces.contains(panelBounds)) {
+        QMatrix4x4 mvp = viewport.projectionMatrix();
+        mvp.translate(deviceAbs.x(), deviceAbs.y());
+        shader->setUniform(KWin::GLShader::Mat4Uniform::ModelViewProjectionMatrix,
+                           mvp);
+        texture->render(deviceAbs.size());
+    } else {
+        const qreal sourceScaleX = texture->width() / panelDevice.width();
+        const qreal sourceScaleY = texture->height() / panelDevice.height();
+        for (const KWin::Rect &piece : visiblePieces.rects()) {
+            const qreal dx = piece.x() - panelDevice.x();
+            const qreal dy = piece.y() - panelDevice.y();
+            const QRectF source(dx * sourceScaleX, dy * sourceScaleY,
+                                piece.width() * sourceScaleX,
+                                piece.height() * sourceScaleY);
+            QMatrix4x4 mvp = viewport.projectionMatrix();
+            mvp.translate(deviceAbs.x() + dx, deviceAbs.y() + dy);
+            shader->setUniform(KWin::GLShader::Mat4Uniform::ModelViewProjectionMatrix,
+                               mvp);
+            texture->render(source, KWin::Region::infinite(), piece.size());
+        }
+    }
 
     glBlendFuncSeparate(prevSrcRgb, prevDstRgb, prevSrcAlpha, prevDstAlpha);
     if (!blendWasEnabled) {
@@ -837,6 +869,9 @@ KWin::GLTexture *ButtonRenderer::cacheTexture(const QString &key, QImage image)
     if (!texture) {
         return nullptr;
     }
+    // Sliced draws can sample just beyond an outer texel at a fractional-scale
+    // edge. Repeating would pull pixels from the opposite side of the panel.
+    texture->setWrapMode(GL_CLAMP_TO_EDGE);
     m_textureBytes += bytes;
     return m_textures.emplace(key, std::move(texture)).first->second.get();
 }
