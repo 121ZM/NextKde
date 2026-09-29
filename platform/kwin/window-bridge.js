@@ -490,6 +490,24 @@ function snapshot() {
     }
     if (liveActiveId === pendingActiveId)
         pendingActiveId = null;
+    // 桌面聚焦分类：KWin 的活动窗可以是我们自己的全屏桌面表面（桌面
+    // 挂件层/壁纸——y=0 的 quickshell 表面），此刻 tracked 侧 activeId 为
+    // 空、kwinActiveId 非空，旧判据把它误读成"未跟踪 transient"。只有
+    // 覆盖整个输出的表面（顶栏 35px 高、启动台/概览 y=35 都不算）才视
+    // 为"焦点在桌面上"。
+    let activeOnDesktopSurface = false;
+    if (activeId !== null && activeId !== pendingActiveId) {
+        for (let k = 0; k < all.length; k++) {
+            const w = all[k];
+            if (w && !w.deleted && windowId(w) === activeId
+                    && String(w.resourceClass) === "quickshell") {
+                const g = w.frameGeometry;
+                if (g && g.y === 0 && g.height >= 200)
+                    activeOnDesktopSurface = true;
+                break;
+            }
+        }
+    }
     const windows = [];
     for (let i = 0; i < all.length; i++) {
         const window = all[i];
@@ -522,7 +540,8 @@ function snapshot() {
             visible: !!propertyValue(window, "visible", true)
         });
     }
-    const json = JSON.stringify({ type: "snapshot", activeId: activeId, windows: windows });
+    const json = JSON.stringify({ type: "snapshot", activeId: activeId,
+        activeDesktop: activeOnDesktopSurface, windows: windows });
     if (json === lastSnapshotJson)
         return;
     lastSnapshotJson = json;
