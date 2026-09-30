@@ -12,9 +12,12 @@
 #include "effect/timeline.h"
 
 #include <QSet>
+#include <QVector>
 
 namespace KWin
 {
+
+struct StageTarget; // 定义在 stageanim.cpp（shell 发布的卡片矩形条目）
 
 struct StageAnimAnimation
 {
@@ -61,7 +64,7 @@ public Q_SLOTS:
     void slotWindowUnminimized(KWin::EffectWindow *w);
 
 private:
-    void resolveTarget(KWin::EffectWindow *w, StageAnimAnimation &anim);
+    void resolveTarget(KWin::EffectWindow *w, StageAnimAnimation &anim, const QVector<StageTarget> &targets);
     std::chrono::milliseconds m_duration;
     QHash<EffectWindow *, StageAnimAnimation> m_animations;
     QSet<EffectWindow *> m_connected; // 已挂 minimizedChanged 的窗口

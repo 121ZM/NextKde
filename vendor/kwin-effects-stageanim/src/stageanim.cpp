@@ -30,13 +30,15 @@ namespace KWin
 // (uncategorized qWarnings from KWin plugins never reach it).
 Q_LOGGING_CATEGORY(STAGEANIM_LOG, "kwin.effects.stageanim", QtInfoMsg)
 
-// 目标解析日志：card 是正常路径，仅在 kwinrc [Effect-stageanim] TraceTargets
-//=true 时输出（调参/验证用，reconfigureEffect 即时生效）；global/fallback 是
-// 异常路径（没查到卡片矩形），始终 warning 提醒。
+// 目标解析日志：card / card-flat 是正常路径（后者 = 中心拖放的直长动画），
+// 仅在 kwinrc [Effect-stageanim] TraceTargets=true 时输出（调参/验证用，
+// reconfigureEffect 即时生效）；global/fallback 是异常路径（没查到卡片
+// 矩形），始终 warning 提醒。
 static void logTarget(bool trace, const char *source, const QString &id,
                       const QRect &rect, qreal scale)
 {
-    if (trace || qstrcmp(source, "card") != 0)
+    if (trace || (qstrcmp(source, "card") != 0
+                  && qstrcmp(source, "card-flat") != 0))
         qCWarning(STAGEANIM_LOG) << "target=" << source << "id=" << id
                                  << "rect=" << rect << "scale=" << scale;
 }
@@ -72,9 +74,18 @@ static QString stageTargetsPath()
         "/quickshell/kos/fg-sched/stage-targets.json");
 }
 
-static QVector<StageTarget> loadTargets()
+// targets 文件的完整快照：卡片矩形 + suppress 名单。每次动画触发只读
+// 一次（旧实现 isSuppressed 与 resolveTarget 各开一遍文件——两次解析
+// 之间 shell 改写会产生撕裂读，且白白翻倍文件 IO）
+struct StageTargetsFile
 {
-    QVector<StageTarget> out;
+    QVector<StageTarget> targets;
+    QSet<QString> suppress;
+};
+
+static StageTargetsFile loadStageTargets()
+{
+    StageTargetsFile out;
     QFile f(stageTargetsPath());
     if (!f.open(QIODevice::ReadOnly))
         return out;
@@ -91,8 +102,9 @@ static QVector<StageTarget> loadTargets()
         }
         return out;
     }
-    const auto arr = doc.object().value(QStringLiteral("targets")).toArray();
-    out.reserve(arr.size());
+    const auto obj = doc.object();
+    const auto arr = obj.value(QStringLiteral("targets")).toArray();
+    out.targets.reserve(arr.size());
     for (const auto &v : arr) {
         const auto o = v.toObject();
         const QRect r(o.value(QStringLiteral("x")).toInt(),
@@ -105,29 +117,22 @@ static QVector<StageTarget> loadTargets()
         t.id = o.value(QStringLiteral("id")).toString();
         t.rect = r;
         t.flat = o.value(QStringLiteral("flat")).toInt(0) == 1;
-        out.append(t);
+        out.targets.append(t);
     }
+    // suppress 名单内的窗口最小化/还原**跳过动画**（瞬间完成）——实时
+    // 卡片模式的静默收放全靠它（悬停预备静默最小化、实时恢复静默还原
+    // +keepBelow 压底都不能打扰视觉）。恒空：伪实时已删，保留解析仅为
+    // 文件格式兼容
+    const auto sup = obj.value(QStringLiteral("suppress")).toArray();
+    for (const auto &v : sup)
+        out.suppress.insert(v.toString());
     return out;
 }
 
-// shell 写进 targets 文件的 suppress 名单：名单内的窗口最小化/还原
-// **跳过动画**（瞬间完成）。实时卡片模式的静默收放全靠它——悬停预备
-//（静默最小化）、实时恢复（静默还原+keepBelow 压底）都不能打扰视觉。
-static bool isSuppressed(const EffectWindow *w)
+// suppress 名单命中判定（名单语义见 loadStageTargets 内注释）
+static bool isSuppressed(const QSet<QString> &suppress, const EffectWindow *w)
 {
-    QFile f(stageTargetsPath());
-    if (!f.open(QIODevice::ReadOnly))
-        return false;
-    const auto doc = QJsonDocument::fromJson(f.readAll());
-    const auto arr = doc.object().value(QStringLiteral("suppress")).toArray();
-    if (arr.isEmpty())
-        return false;
-    const QString selfId = w->internalId().toString(QUuid::WithoutBraces);
-    for (const auto &v : arr) {
-        if (v.toString() == selfId)
-            return true;
-    }
-    return false;
+    return suppress.contains(w->internalId().toString(QUuid::WithoutBraces));
 }
 
 StageAnimEffect::StageAnimEffect()
@@ -219,14 +224,14 @@ void StageAnimEffect::prePaintWindow(RenderView *view, EffectWindow *w, WindowPr
 // ① shell 发布的按窗口 id 卡片矩形（窗口从自己的卡片原地长出/收回）
 // ② 全局侧栏矩形（kwinrc [Effect-stageanim] Target*）
 // ③ 都没有时保持无效，apply() 走原版回落（任务栏图标几何/光标）。
-void StageAnimEffect::resolveTarget(EffectWindow *w, StageAnimAnimation &anim)
+void StageAnimEffect::resolveTarget(EffectWindow *w, StageAnimAnimation &anim,
+                                    const QVector<StageTarget> &targets)
 {
     anim.target = QRect();
     anim.endScale = -1.0;
     anim.flat = false;
 
     const QRect geo = w->frameGeometry().toRect();
-    const QVector<StageTarget> targets = loadTargets();
     if (!targets.isEmpty() && geo.width() > 0) {
         const QString selfId = w->internalId().toString(QUuid::WithoutBraces);
         for (const auto &t : targets) {
@@ -326,9 +331,8 @@ void StageAnimEffect::apply(EffectWindow *w, int mask, WindowPaintData &data, Wi
     // 即先淡入）。在此之上叠加旋转分量：t=1（卡片态）带卡片的 3D 倾斜姿态、
     // t=0 平铺——窗口"从倾斜卡片旋转展开"，而不是生硬的等比放大。
     // WindowVertex 只有 2D 顶点，倾斜用针孔透视投影模拟：绕缩放矩形中心
-    // 垂直轴（与卡片 origin.x = width/2 对齐）转 angleDeg，顶点按深度
-    // （与卡片 origin.x = width 对齐）转 angleDeg，顶点按深度
-    // k = focal/(focal−z) 缩放。⚠️ Qt 的 Y 轴朝下，QML 正角绕 Y 旋转时
+    // 垂直轴（pivot 与卡片 origin.x = width/2 对齐）转 angleDeg，顶点按
+    // 深度 k = focal/(focal−z) 缩放。⚠️ Qt 的 Y 轴朝下，QML 正角绕 Y 旋转时
     // 卡片是"左缘近大、右缘远小"（右缘 z<0 远离观察者），特效必须同向。
     const QPointF fromC = QRectF(geo).center();
     const QPointF toC = target.center();
@@ -414,14 +418,16 @@ void StageAnimEffect::slotWindowMinimized(EffectWindow *w)
         return;
     }
 
+    // targets 文件每触发只读一次（suppress 判定 + 卡片矩形共用同一快照）
+    const StageTargetsFile snap = loadStageTargets();
     // suppress 名单 = 实时模式的静默收放（悬停预备/实时恢复）：不建动画，
     // 窗口瞬间消失——视觉上"没发生过"，实时内容与显式动画由此共存
-    if (isSuppressed(w)) {
+    if (isSuppressed(snap.suppress, w)) {
         return;
     }
 
     StageAnimAnimation &animation = m_animations[w];
-    resolveTarget(w, animation);
+    resolveTarget(w, animation, snap.targets);
 
     if (animation.timeLine.running()) {
         animation.timeLine.toggleDirection();
@@ -442,14 +448,15 @@ void StageAnimEffect::slotWindowUnminimized(EffectWindow *w)
         return;
     }
 
+    const StageTargetsFile snap = loadStageTargets();
     // 同上：suppress 名单内的还原瞬间完成（不播翻转动画）——engage 前由
     // shell 先把目标窗移出名单，翻转动画才可见
-    if (isSuppressed(w)) {
+    if (isSuppressed(snap.suppress, w)) {
         return;
     }
 
     StageAnimAnimation &animation = m_animations[w];
-    resolveTarget(w, animation);
+    resolveTarget(w, animation, snap.targets);
 
     if (animation.timeLine.running()) {
         animation.timeLine.toggleDirection();
