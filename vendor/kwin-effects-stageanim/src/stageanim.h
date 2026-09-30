@@ -23,6 +23,7 @@ struct StageAnimAnimation
     // 每窗目标（shell 按 KWin internalId 发布的卡片矩形）；无效 = 全局/回落
     QRect target;
     qreal endScale = -1.0;
+    bool flat = false; // 目标卡片是正视的（中心拖放）：无倾斜分量
 };
 
 // MagicLamp derivative whose minimize target is resolved per animation

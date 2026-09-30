@@ -57,6 +57,8 @@ struct StageTarget
 {
     QString id; // KWin internalId（无花括号），与 shell windowId 逐字一致
     QRect rect;
+    bool flat = false; // shell 标记：从"正视卡片"直长/直收（中心拖放），
+                       // 动画不带倾斜分量
 };
 
 // 目标文件路径：$XDG_STATE_HOME/quickshell/kos/fg-sched/stage-targets.json
@@ -102,6 +104,7 @@ static QVector<StageTarget> loadTargets()
         StageTarget t;
         t.id = o.value(QStringLiteral("id")).toString();
         t.rect = r;
+        t.flat = o.value(QStringLiteral("flat")).toInt(0) == 1;
         out.append(t);
     }
     return out;
@@ -220,6 +223,7 @@ void StageAnimEffect::resolveTarget(EffectWindow *w, StageAnimAnimation &anim)
 {
     anim.target = QRect();
     anim.endScale = -1.0;
+    anim.flat = false;
 
     const QRect geo = w->frameGeometry().toRect();
     const QVector<StageTarget> targets = loadTargets();
@@ -230,11 +234,13 @@ void StageAnimEffect::resolveTarget(EffectWindow *w, StageAnimAnimation &anim)
                 continue;
             // 等比缩放装进卡片（两轴取小，不拉伸内容——比例失调是红线）
             anim.target = t.rect;
+            anim.flat = t.flat;
             anim.endScale = std::clamp(
                 std::min(qreal(t.rect.width()) / geo.width(),
                          qreal(t.rect.height()) / geo.height()),
                 kCardMinEndScale, kCardMaxEndScale);
-            logTarget(m_trace, "card", selfId, t.rect, anim.endScale);
+            logTarget(m_trace, t.flat ? "card-flat" : "card", selfId, t.rect,
+                anim.endScale);
             return;
         }
     }
@@ -328,7 +334,8 @@ void StageAnimEffect::apply(EffectWindow *w, int mask, WindowPaintData &data, Wi
     const QPointF toC = target.center();
     const QPointF c = fromC + (toC - fromC) * t;
     const qreal s = 1.0 + (endScale - 1.0) * t;
-    const qreal angleDeg = haveTarget ? m_tiltAngle * t : 0.0;
+    const qreal angleDeg = (haveTarget && !(*animationIt).flat)
+        ? m_tiltAngle * t : 0.0;
     const qreal rad = qDegreesToRadians(angleDeg);
     const qreal cosR = std::cos(rad);
     const qreal sinR = std::sin(rad);
