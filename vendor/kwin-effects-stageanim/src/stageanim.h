@@ -73,6 +73,7 @@ private:
     qreal m_tiltAngle = 22.0; // kwinrc TiltAngle：卡片倾斜角，动画起止姿态
     qreal m_glassOpacity = 0.65; // kwinrc GlassOpacity：飞行途中透明度（1=关）
     bool m_trace = false; // kwinrc TraceTargets：正常路径也打目标解析日志
+    bool m_mirrorTargets = false; // kwinrc TargetMirror：右侧常驻——装卡姿态镜像
 };
 
 } // namespace

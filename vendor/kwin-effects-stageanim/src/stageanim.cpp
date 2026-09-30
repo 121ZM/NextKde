@@ -185,6 +185,10 @@ void StageAnimEffect::reconfigure(ReconfigureFlags)
 
     m_trace = grp.readEntry<bool>("TraceTargets", false);
 
+    // 右侧常驻（shell 的 StageModeService 投影）：装卡姿态镜像——卡片
+    // 倾斜在右侧取反（右缘近大），动画终点姿态须与卡片一致
+    m_mirrorTargets = grp.readEntry<bool>("TargetMirror", false);
+
     // 缓动曲线可配（kwinrc EasingCurve，默认 OutCubic 无阻尼）
     const QString curve = grp.readEntry<QString>("EasingCurve", QStringLiteral("OutCubic"));
     if (curve == QLatin1String("InOutCubic"))
@@ -338,8 +342,11 @@ void StageAnimEffect::apply(EffectWindow *w, int mask, WindowPaintData &data, Wi
     const QPointF toC = target.center();
     const QPointF c = fromC + (toC - fromC) * t;
     const qreal s = 1.0 + (endScale - 1.0) * t;
+    // 右侧常驻（m_mirrorTargets）时装卡倾斜取反：镜像后右缘近大，与
+    // 卡片的右侧镜像角同姿态（StageCard 的 angleRad 同源取反）
+    const qreal tiltSign = m_mirrorTargets ? -1.0 : 1.0;
     const qreal angleDeg = (haveTarget && !(*animationIt).flat)
-        ? m_tiltAngle * t : 0.0;
+        ? tiltSign * m_tiltAngle * t : 0.0;
     const qreal rad = qDegreesToRadians(angleDeg);
     const qreal cosR = std::cos(rad);
     const qreal sinR = std::sin(rad);
@@ -354,8 +361,8 @@ void StageAnimEffect::apply(EffectWindow *w, int mask, WindowPaintData &data, Wi
             const qreal gy = geo.y() + v.y();
             qreal sx = (gx - fromC.x()) * s + c.x();
             qreal sy = (gy - fromC.y()) * s + c.y();
-            if (angleDeg > 0.01) {
-                const qreal depth = (pivotX - sx) * sinR; // 左缘 depth>0 → 近大
+            if (std::abs(angleDeg) > 0.01) {
+                const qreal depth = (pivotX - sx) * sinR; // 正角左缘近大，负角（镜像）右缘近大
                 const qreal k = focal / (focal - depth);
                 sx = pivotX + (sx - pivotX) * cosR * k;
                 sy = cy + (sy - cy) * k;
