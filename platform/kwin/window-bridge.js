@@ -94,9 +94,17 @@ function parkWindow(window, on) {
             parkedGeometry[key] = {
                 x: g.x, y: g.y, width: g.width, height: g.height
             };
-            // ⚠️ KWin 6.6 无 workspace.geometry（TypeError 实测）——用绝对
-            // 停泊 X（远超任何单屏逻辑宽；本机 1696），多屏右摆场景再校准
-            const parkedX = 5000;
+            // 屏外停泊位 = 虚拟屏（全部输出并集）右缘外 100px——多屏右摆
+            // 也安全。KWin 6.6 无 workspace.geometry，但 virtualScreenGeometry
+            // 可用（实测 QRect(0,0,1696,1200)）；拿不到时退回绝对常量
+            // （远超任何单屏逻辑宽）
+            let parkedX = 5000;
+            try {
+                const vsg = workspace.virtualScreenGeometry;
+                parkedX = vsg.x + vsg.width + 100;
+            } catch (geometryError) {
+                // 保持常量兜底
+            }
             window.frameGeometry = {
                 x: parkedX,
                 y: g.y, width: g.width, height: g.height
