@@ -301,7 +301,7 @@ vec3 BlackBodyColor(sampler2D black_body_texture, float temperature) {
 
 
 
-// Returns the light emitted by the accretion disc at 'p', at time 'p_t', 
+// Returns the light emitted by the accretion disc at 'p', at time 'p_t',
 // shifted by the given Doppler factor. The 1D texture should contain the light
 // emitted by a black body at temperature T at texture coord log(T / 100) / 6.
 // The following constants must be provided by the user:

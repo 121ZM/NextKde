@@ -47,7 +47,7 @@ vec4 p,s;
 p.xyz = floor( fract (vec3(j) * ip.xyz) * 7.0) * ip.z - 1.0;
 p.w = 1.5 - dot(abs(p.xyz), ones.xyz);
 s = vec4(lessThan(p, vec4(0.0)));
-p.xyz = p.xyz + (s.xyz*2.0 - 1.0) * s.www; 
+p.xyz = p.xyz + (s.xyz*2.0 - 1.0) * s.www;
 return p;
 }
 #define F4 0.309016994374947451
@@ -71,7 +71,7 @@ vec4 x1 = x0 - i1 + C.xxxx;
 vec4 x2 = x0 - i2 + C.yyyy;
 vec4 x3 = x0 - i3 + C.zzzz;
 vec4 x4 = x0 + C.wwww;
-i = mod289(i); 
+i = mod289(i);
 float j0 = permute( permute( permute( permute(i.w) + i.z) + i.y) + i.x);
 vec4 j1 = permute( permute( permute( permute (
 i.w + vec4(i1.w, i2.w, i3.w, 1.0 ))
