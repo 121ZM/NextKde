@@ -14,8 +14,9 @@ let
   kwin-dock-window-animation = pkgs.callPackage ./kwin-dock-window-animation.nix { inherit src; };
   kwin-context-menu-input = pkgs.callPackage ./kwin-context-menu-input.nix { inherit src; };
   kwin-effects-glass = pkgs.callPackage ./kwin-effects-glass.nix { inherit src; };
+  kwin-kos-bridge = pkgs.callPackage ./kwin-kos-bridge.nix { inherit src; };
   kosctl = pkgs.callPackage ./kosctl.nix { inherit src; };
-  kwin-decoration-liquid-glass = pkgs.callPackage ./kwin-decoration-liquid-glass.nix { inherit src; };
+  kwin-kos-decoration = pkgs.callPackage ./kwin-kos-decoration.nix { inherit src; };
   kos-weather = if buildWeather then pkgs.callPackage ./kos-weather.nix { inherit src; } else null;
 
   qs_bin = if quickshell != null then "${quickshell}/bin/quickshell" else "/run/current-system/sw/bin/quickshell";
@@ -61,6 +62,7 @@ stdenv.mkDerivation {
     # --- Binaries ---
     mkdir -p $out/libexec
     ln -s ${kos-platform}/libexec/kos-platform $out/libexec/kos-platform
+    ln -s ${kos-platform}/libexec/kos-ai-worker $out/libexec/kos-ai-worker
     ln -s ${shell-data-service}/libexec/kos-data-service $out/libexec/kos-data-service
 
     mkdir -p $out/bin
@@ -81,6 +83,7 @@ stdenv.mkDerivation {
     # --- Settings QML (for reference; kos-settings binary embeds path) ---
     mkdir -p $out/share/kos/settings
     cp apps/settings/main.qml $out/share/kos/settings/main.qml
+    cp apps/settings/Wallpaper*.qml $out/share/kos/settings/
 
     # --- KWin bridge script ---
     mkdir -p $out/share/kos/platform/kwin
@@ -122,7 +125,7 @@ stdenv.mkDerivation {
   passthru = {
     inherit shell-data-service kos-settings kos-platform kosctl
             kwin-dock-window-animation kwin-context-menu-input kwin-effects-glass
-            kwin-decoration-liquid-glass;
+            kwin-kos-bridge kwin-kos-decoration;
     inherit patched-platform-service patched-shell-service;
     weather = if buildWeather then kos-weather else null;
   };

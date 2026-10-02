@@ -3,6 +3,8 @@
     stdenv,
     cmake,
     kdePackages,
+    opencv,
+    onnxruntime,
     src,
 }:
 
@@ -10,6 +12,12 @@ stdenv.mkDerivation {
     pname = "kos-platform";
     version = "unstable";
     src = "${src}/platform";
+
+    # The standalone AI library is kept beside `platform/` in the source
+    # tree, while this derivation builds the platform subdirectory alone.
+    postPatch = ''
+      cp -r ${src}/liquid-ai liquid-ai
+    '';
 
     nativeBuildInputs = [
         cmake
@@ -22,6 +30,8 @@ stdenv.mkDerivation {
         kdePackages.kiconthemes
         kdePackages.kglobalaccel
         kdePackages.kio
+        opencv
+        onnxruntime
     ];
 
     cmakeFlags = [ "-DCMAKE_BUILD_TYPE=Release" ];
