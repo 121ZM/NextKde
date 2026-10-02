@@ -13,8 +13,17 @@ Item {
         && ScreenLifecycle.activeScreen !== null
         && targetScreen.name === ScreenLifecycle.activeScreen.name
     readonly property bool active: selectedOutput && SpatialWallpaperService.ready
-        && !WallpaperPreviewService.active
+        && (!WallpaperPreviewService.active || WallpaperPreviewService.mode === "image")
     visible: selectedOutput
+    opacity: visualReady && !SpatialWallpaperService.activationPending ? 1 : 0
+    Behavior on opacity { NumberAnimation { duration: 500; easing.type: Easing.OutCubic } }
+    function finishPresentation() {
+        Qt.callLater(() => {
+            if (root.visualReady && SpatialWallpaperService.activationPending)
+                SpatialWallpaperService.presentationReady()
+        })
+    }
+    onVisualReadyChanged: if (visualReady) finishPresentation()
     property real pointerX: 0
     property real pointerY: 0
     property real renderedPointerX: pointerX
@@ -49,6 +58,7 @@ Item {
     function syncMeshRenderer() {
         if (!meshRenderer.item)
             return
+        meshRenderer.item.textureSize = root.textureSize
         meshRenderer.item.wallpaperPath = SpatialWallpaperService.wallpaperUrl
         meshRenderer.item.depthPath = SpatialWallpaperService.depthPath
         meshRenderer.item.backgroundPath = SpatialWallpaperService.layeredReady
@@ -186,8 +196,12 @@ Item {
     onRenderedPointerXChanged: syncMeshRenderer()
     onRenderedPointerYChanged: syncMeshRenderer()
     onOutputAspectChanged: syncMeshRenderer()
+    onTextureSizeChanged: syncMeshRenderer()
     Connections {
         target: SpatialWallpaperService
+        function onActivationPendingChanged() {
+            if (root.visualReady) root.finishPresentation()
+        }
         function onDepthPathChanged() { root.syncMeshRenderer() }
         function onBackgroundPathChanged() { root.syncMeshRenderer() }
         function onMattePathChanged() { root.syncMeshRenderer() }

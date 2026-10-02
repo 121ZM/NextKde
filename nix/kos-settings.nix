@@ -4,6 +4,7 @@
     cmake,
     ninja,
     kdePackages,
+    quickshell,
     src,
 }:
 
@@ -15,13 +16,18 @@ stdenv.mkDerivation {
     nativeBuildInputs = [
         cmake
         ninja
-        kdePackages.qtbase
-        kdePackages.qtdeclarative
+        kdePackages.wrapQtAppsHook
     ];
+
+    buildInputs = [ kdePackages.qtbase kdePackages.qtdeclarative
+                    kdePackages.qtsvg kdePackages.qtimageformats kdePackages.qt5compat ];
+
+    preFixup = ''
+        qtWrapperArgs+=(--prefix PATH : ${lib.makeBinPath [ quickshell ]})
+    '';
 
     dontBuild = true;
     dontConfigure = true;
-    dontWrapQtApps = true;
 
     installPhase = ''
         runHook preInstall

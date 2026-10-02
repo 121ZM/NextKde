@@ -237,6 +237,7 @@ GenerateDepthResult DepthGenerator::generate(const std::filesystem::path &imageP
             }
         }
 
+        if (ModelManager::progress) ModelManager::progress("正在生成深度图", -1, -1);
         const cv::Size inputSize = modelSize(image.size());
         if (inputSize.empty()
             || static_cast<qint64>(inputSize.width) * inputSize.height > maximumModelPixels) {

@@ -3,14 +3,19 @@
   stdenv,
   pkgs,
   src,
-  quickshell ? null,
+  quickshell ? pkgs.quickshell,
   buildWeather ? false,
 }:
 
 let
   shell-data-service = pkgs.callPackage ./shell-data-service.nix { inherit src; };
-  kos-settings = pkgs.callPackage ./kos-settings.nix { inherit src; };
+  kos-settings = pkgs.callPackage ./kos-settings.nix {
+    inherit src;
+    quickshell = if quickshell != null then quickshell else pkgs.quickshell;
+  };
   kos-platform = pkgs.callPackage ./kos-platform.nix { inherit src; };
+  kos-surface-shape = pkgs.callPackage ./kos-surface-shape.nix { inherit src; };
+  kos-spatial3d = pkgs.callPackage ./kos-spatial3d.nix { inherit src; };
   kwin-dock-window-animation = pkgs.callPackage ./kwin-dock-window-animation.nix { inherit src; };
   kwin-context-menu-input = pkgs.callPackage ./kwin-context-menu-input.nix { inherit src; };
   kwin-effects-glass = pkgs.callPackage ./kwin-effects-glass.nix { inherit src; };
@@ -45,6 +50,8 @@ let
       sed 's|@QS_EXEC@|${qs_bin}|g' \
         ${src}/packaging/systemd/kos-shell.service.in \
         > $out/lib/systemd/user/kos-shell.service
+      sed -i 's|^Environment=QML2_IMPORT_PATH=.*|Environment=QML2_IMPORT_PATH=%h/.config/quickshell/kos:${kos-spatial3d}/lib/qt6/qml:${pkgs.kdePackages.qtquick3d}/lib/qt-6/qml:${pkgs.kdePackages.qt5compat}/lib/qt-6/qml|' $out/lib/systemd/user/kos-shell.service
+      sed -i '/^Environment=QML2_IMPORT_PATH=/a Environment=QT_PLUGIN_PATH=${pkgs.kdePackages.qtsvg}/lib/qt-6/plugins:${pkgs.kdePackages.qtimageformats}/lib/qt-6/plugins' $out/lib/systemd/user/kos-shell.service
       runHook postInstall
     '';
   };
@@ -83,7 +90,12 @@ stdenv.mkDerivation {
     # --- Settings QML (for reference; kos-settings binary embeds path) ---
     mkdir -p $out/share/kos/settings
     cp apps/settings/main.qml $out/share/kos/settings/main.qml
-    cp apps/settings/Wallpaper*.qml $out/share/kos/settings/
+    cp apps/settings/Wallpaper*.qml apps/settings/ThemeWallpaperTile.qml \
+      apps/settings/ServicesSettingsPage.qml $out/share/kos/settings/
+    cp -r apps/settings/icons $out/share/kos/settings/
+    mkdir -p $out/qml/Kos
+    ln -s ${kos-spatial3d}/lib/qt6/qml/Kos/Spatial3D $out/qml/Kos/Spatial3D
+    ln -s ${kos-surface-shape}/lib/qt6/qml/Kos/SurfaceShape $out/qml/Kos/SurfaceShape
 
     # --- KWin bridge script ---
     mkdir -p $out/share/kos/platform/kwin
@@ -123,7 +135,7 @@ stdenv.mkDerivation {
   '';
 
   passthru = {
-    inherit shell-data-service kos-settings kos-platform kosctl
+    inherit shell-data-service kos-settings kos-platform kos-spatial3d kos-surface-shape kosctl
             kwin-dock-window-animation kwin-context-menu-input kwin-effects-glass
             kwin-kos-bridge kwin-kos-decoration;
     inherit patched-platform-service patched-shell-service;

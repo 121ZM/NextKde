@@ -2,11 +2,16 @@
 
 #include <filesystem>
 #include <string>
+#include <functional>
+#include <cstdint>
 
 namespace LiquidAI {
 
 class ModelManager final {
 public:
+    using Progress = std::function<void(const std::string &, std::int64_t, std::int64_t)>;
+    // Scoped by the worker's current request; never retained by the UI.
+    static thread_local Progress progress;
     bool ensureDepthAnythingV2Small(std::filesystem::path *path,
                                     std::string *error) const;
     bool ensureForegroundIsNet(std::filesystem::path *path,

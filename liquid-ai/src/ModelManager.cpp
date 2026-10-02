@@ -12,6 +12,7 @@
 #include <QTimer>
 #include <QUrl>
 #include <QEventLoop>
+#include <QElapsedTimer>
 
 #include <limits>
 
@@ -58,6 +59,9 @@ bool ensureVerifiedModel(const QString &fileName, const char *expectedSha256,
         return false;
     }
     const QString destination = directory + QLatin1Char('/') + fileName;
+    const std::string label = fileName.startsWith("depth-") ? "深度估计模型" : "前景分割模型";
+    if (LiquidAI::ModelManager::progress)
+        LiquidAI::ModelManager::progress("正在校验" + label, -1, -1);
     QByteArray digest;
     if (QFileInfo(destination).isFile() && hashFile(destination, &digest)
         && digest == QByteArray(expectedSha256)) {
@@ -70,7 +74,9 @@ bool ensureVerifiedModel(const QString &fileName, const char *expectedSha256,
     QNetworkRequest request{QUrl(QString::fromLatin1(downloadUrl))};
     request.setAttribute(QNetworkRequest::RedirectPolicyAttribute,
                          QNetworkRequest::NoLessSafeRedirectPolicy);
+    request.setTransferTimeout(60000); // Fail stalled transfers, allow slow active downloads.
     QNetworkReply *reply = network.get(request);
+    reply->setReadBufferSize(1024 * 1024);
     QSaveFile output(destination + QStringLiteral(".download"));
     if (!output.open(QIODevice::WriteOnly)) {
         reply->abort();
@@ -81,6 +87,7 @@ bool ensureVerifiedModel(const QString &fileName, const char *expectedSha256,
 
     constexpr qint64 maximumModelBytes = 200LL * 1024 * 1024;
     bool tooLarge = false;
+    bool writeFailed = false;
     QObject::connect(reply, &QIODevice::readyRead, reply, [&] {
         const QByteArray chunk = reply->readAll();
         if (output.size() + chunk.size() > maximumModelBytes) {
@@ -88,21 +95,39 @@ bool ensureVerifiedModel(const QString &fileName, const char *expectedSha256,
             reply->abort();
             return;
         }
-        if (output.write(chunk) != chunk.size())
+        if (output.write(chunk) != chunk.size()) {
+            writeFailed = true;
             reply->abort();
+        }
     });
+    QElapsedTimer progressClock;
+    progressClock.start();
+    QObject::connect(reply, &QNetworkReply::downloadProgress, reply,
+        [label, &progressClock](qint64 received, qint64 total) {
+            if (progressClock.elapsed() < 200 && received != total)
+                return;
+            progressClock.restart();
+            if (LiquidAI::ModelManager::progress)
+                LiquidAI::ModelManager::progress("正在下载" + label, received, total);
+        });
     QEventLoop loop;
     QObject::connect(reply, &QNetworkReply::finished, &loop, &QEventLoop::quit);
     QTimer timeout;
     timeout.setSingleShot(true);
     timeout.setInterval(timeoutMs);
-    QObject::connect(&timeout, &QTimer::timeout, reply, &QNetworkReply::abort);
+    bool timedOut = false;
+    QObject::connect(&timeout, &QTimer::timeout, reply, [&] {
+        timedOut = true;
+        reply->abort();
+    });
     timeout.start();
     loop.exec();
 
     const QByteArray tail = reply->readAll();
-    if (!tail.isEmpty() && output.size() + tail.size() <= maximumModelBytes)
-        output.write(tail);
+    if (output.size() + tail.size() > maximumModelBytes)
+        tooLarge = true;
+    else if (!tail.isEmpty() && output.write(tail) != tail.size())
+        writeFailed = true;
     const auto status = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
     const auto networkError = reply->error();
     const QString networkMessage = reply->errorString();
@@ -112,9 +137,15 @@ bool ensureVerifiedModel(const QString &fileName, const char *expectedSha256,
         *error = "模型文件超过大小上限";
         return false;
     }
+    if (writeFailed) {
+        output.cancelWriting();
+        *error = "模型写入失败，请检查磁盘空间";
+        return false;
+    }
     if (networkError != QNetworkReply::NoError || status < 200 || status >= 300) {
         output.cancelWriting();
-        *error = "模型下载失败：" + networkMessage.toStdString();
+        *error = timedOut ? "模型下载超时，请检查网络或代理后重试"
+            : "模型下载失败：" + networkMessage.toStdString();
         return false;
     }
     if (!output.commit() || !hashFile(destination + QStringLiteral(".download"), &digest)
@@ -136,11 +167,13 @@ bool ensureVerifiedModel(const QString &fileName, const char *expectedSha256,
 
 namespace LiquidAI {
 
+thread_local ModelManager::Progress ModelManager::progress;
+
 bool ModelManager::ensureDepthAnythingV2Small(std::filesystem::path *path,
                                              std::string *error) const
 {
     return ensureVerifiedModel(QStringLiteral("depth-anything-v2-small-vits.onnx"),
-                               modelSha256, modelUrl, path, error, 180000);
+                               modelSha256, modelUrl, path, error, 600000);
 }
 
 bool ModelManager::ensureForegroundIsNet(std::filesystem::path *path,
@@ -148,7 +181,7 @@ bool ModelManager::ensureForegroundIsNet(std::filesystem::path *path,
 {
     return ensureVerifiedModel(QStringLiteral("isnet-general-use.onnx"),
                                foregroundModelSha256, foregroundModelUrl,
-                               path, error, 60000);
+                               path, error, 600000);
 }
 
 } // namespace LiquidAI

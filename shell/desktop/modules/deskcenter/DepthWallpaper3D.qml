@@ -8,6 +8,7 @@ Item {
     property url depthPath
     property url backgroundPath
     property url mattePath
+    property size textureSize: Qt.size(Math.max(1, width), Math.max(1, height))
     property real pointerX: 0
     property real pointerY: 0
     property real outputAspect: width > 0 && height > 0 ? width / height : 16 / 9
@@ -27,18 +28,23 @@ Item {
         id: sourceInfo
         visible: false
         source: root.wallpaperPath
+        autoTransform: true
+        fillMode: Image.PreserveAspectCrop
+        sourceSize: root.textureSize
         asynchronous: true
     }
     Image {
         id: backgroundInfo
         visible: false
         source: root.backgroundPath
+        sourceSize: root.textureSize
         asynchronous: true
     }
     Image {
         id: matteInfo
         visible: false
         source: root.mattePath
+        sourceSize: root.textureSize
         asynchronous: true
     }
 
@@ -51,7 +57,7 @@ Item {
         environment: SceneEnvironment {
             backgroundMode: SceneEnvironment.Transparent
             antialiasingMode: SceneEnvironment.MSAA
-            antialiasingQuality: SceneEnvironment.High
+            antialiasingQuality: SceneEnvironment.Medium
         }
 
         PerspectiveCamera {

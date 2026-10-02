@@ -20,9 +20,19 @@ QtObject {
     property bool preparationRequested: false
     property int retryCount: 0
     property string errorMessage: ""
+    property bool previewEnabled: false
+    property bool activationPending: false
+    property bool waitingForResources: false
     readonly property bool enabled: AppearanceConfigService.spatialWallpaperEnabled
-    readonly property url wallpaperUrl: WallpaperColorSource.wallpaperUrl
-    readonly property bool ready: enabled && depthPath.length > 0
+    readonly property url wallpaperUrl: WallpaperPreviewService.active
+        ? WallpaperPreviewService.image : WallpaperService.wallpaperUrl
+    // The preview draft may be an image while the committed desktop is a theme.
+    readonly property bool imageMode: WallpaperPreviewService.active
+        ? WallpaperPreviewService.mode === "image" : WallpaperService.mode !== "theme"
+    readonly property bool ready: imageMode && !ThemeWallpaperService.active
+        && SpatialResourceService.enabled
+        && (WallpaperPreviewService.active ? (previewEnabled || activationPending)
+            : (enabled || activationPending)) && depthPath.length > 0
         && imagePath === currentImagePath()
     readonly property bool prepared: depthPath.length > 0
         && imagePath === currentImagePath()
@@ -46,6 +56,7 @@ QtObject {
     function refreshWallpaper() {
         const nextPath = currentImagePath()
         if (nextPath !== imagePath) {
+            cancelPreparation()
             imagePath = nextPath
             depthPath = ""
             backgroundPath = ""
@@ -55,12 +66,12 @@ QtObject {
             retryCount = 0
             retryTimer.stop()
         }
-        if ((enabled || preparationRequested) && nextPath)
+        if (enabled && WallpaperService.mode !== "theme" && !WallpaperPreviewService.active && SpatialResourceService.enabled && nextPath)
             requestDelay.restart()
     }
 
     function requestDepthIfNeeded() {
-        if ((!enabled && !preparationRequested) || !imagePath
+        if ((!enabled && !preparationRequested) || !SpatialResourceService.enabled || !imagePath
                 || requestInFlight || depthPath)
             return
         requestedPath = imagePath
@@ -69,17 +80,105 @@ QtObject {
         DepthManager.generate(requestedPath)
     }
 
+    function cancelActivation() {
+        if (!WallpaperPreviewService.active) AppearanceConfigService.updateSpatialWallpaperEnabled(false)
+        cancelPreparation()
+    }
+    function cancelPreparation() {
+        const hadTask = requestInFlight || preparationRequested || waitingForResources
+        requestDelay.stop()
+        retryTimer.stop()
+        presentationWatchdog.stop()
+        DepthManager.invalidate()
+        requestedPath = ""
+        requestInFlight = false
+        preparationRequested = false
+        waitingForResources = false
+        activationPending = false
+        previewEnabled = false
+        depthPath = ""
+        backgroundPath = ""
+        mattePath = ""
+        influencePath = ""
+        errorMessage = ""
+        if (hadTask) SpatialResourceService.cancel()
+    }
     function prepareForEnable() {
+        if (preparationRequested || requestInFlight) return false
         refreshWallpaper()
-        if (!imagePath)
+        if (!imageMode || !imagePath) {
+            errorMessage = "请先选择图片壁纸"
             return false
-        if (prepared)
-            return true
+        }
         errorMessage = ""
         retryCount = 0
         preparationRequested = true
-        requestDepthIfNeeded()
+        activationPending = true
+        if (!SpatialResourceService.enabled) {
+            waitingForResources = true
+            if (!SpatialResourceService.initialize()) {
+                waitingForResources = false
+                preparationRequested = false
+                activationPending = false
+                errorMessage = SpatialResourceService.errorMessage || "资源正在检查，请稍后重试"
+                return false
+            }
+        } else requestDepthIfNeeded()
         return true
+    }
+    // Called only after the textures/renderer have loaded, before the visual fade-in.
+    function presentationReady() {
+        if (!activationPending || !prepared) return
+        presentationWatchdog.stop()
+        if (WallpaperPreviewService.active) previewEnabled = true
+        else {
+            WallpaperService.setSlideshow(false, WallpaperService.slideshowIntervalMinutes, JSON.stringify(WallpaperService.slideshowImages))
+            WallpaperService.setTakeoverEnabled(true)
+            AppearanceConfigService.updateSpatialWallpaperEnabled(true)
+        }
+        activationPending = false
+        preparationRequested = false
+    }
+    property Connections resources: Connections {
+        target: SpatialResourceService
+        function onEnabledChanged() {
+            if (SpatialResourceService.enabled && root.enabled && !WallpaperPreviewService.active)
+                root.refreshWallpaper()
+        }
+        function onInitialized() {
+            if (!root.waitingForResources) return
+            root.waitingForResources = false
+            root.requestDepthIfNeeded()
+        }
+        function onErrorMessageChanged() {
+            if (root.waitingForResources && SpatialResourceService.errorMessage) {
+                root.errorMessage = SpatialResourceService.errorMessage
+                root.preparationRequested = false
+                root.activationPending = false
+                root.waitingForResources = false
+            }
+        }
+    }
+
+    property Timer presentationWatchdog: Timer {
+        interval: 20000
+        onTriggered: {
+            console.warn("[SpatialWallpaper] presentation timed out: " + JSON.stringify({
+                wallpaperMode: WallpaperService.mode,
+                previewActive: WallpaperPreviewService.active,
+                previewMode: WallpaperPreviewService.mode,
+                imageMode: root.imageMode,
+                ready: root.ready,
+                prepared: root.prepared,
+                image: root.imagePath,
+                depth: root.depthPath,
+                background: root.backgroundPath,
+                matte: root.mattePath,
+                influence: root.influencePath
+            }))
+            root.cancelPreparation()
+            root.errorMessage = "空间素材加载失败，请重试"
+        }
     }
 
     // Wallpaper services can publish several URLs during startup. Let the
@@ -96,7 +195,7 @@ QtObject {
     }
 
     property Connections wallpaperChanges: Connections {
-        target: WallpaperColorSource
+        target: root
         function onWallpaperUrlChanged() { root.refreshWallpaper() }
     }
 
@@ -129,11 +228,15 @@ QtObject {
                     && sourcePath === root.imagePath && resultPath) {
                 root.retryCount = 0
                 root.errorMessage = ""
-                root.depthPath = resultPath
                 root.backgroundPath = backgroundPath
                 root.mattePath = mattePath
                 root.influencePath = influencePath
-                root.preparationRequested = false
+                SpatialResourceService.stage = "正在加载空间素材…"
+                SpatialResourceService.received = -1
+                SpatialResourceService.total = -1
+                root.depthPath = resultPath
+                if (root.activationPending) root.presentationWatchdog.restart()
+                SpatialResourceService.inspect()
                 console.log("[SpatialWallpaper] depth ready for " + sourcePath)
             } else if (root.enabled || root.preparationRequested)
                 root.requestDelay.restart()
@@ -148,6 +251,7 @@ QtObject {
                     && sourcePath === root.imagePath) {
                 root.errorMessage = message
                 root.preparationRequested = false
+                root.activationPending = false
                 if (root.enabled && retryable
                         && code !== "depth-generation-failed") {
                     root.retryCount++

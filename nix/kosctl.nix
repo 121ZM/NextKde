@@ -7,6 +7,7 @@
   coreutils,
   systemd,
   kdePackages,
+  quickshell,
 }:
 
 stdenv.mkDerivation {
@@ -29,6 +30,7 @@ stdenv.mkDerivation {
     wrapProgram $out/bin/kosctl \
       --prefix PATH : ${lib.makeBinPath [
         coreutils
+        quickshell
         systemd
         kdePackages.kconfig
       ]}

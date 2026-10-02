@@ -22,7 +22,7 @@ namespace fs = std::filesystem;
 
 namespace {
 
-constexpr int maximumWidth = 2560;
+constexpr int maximumDimension = 2560;
 
 QString toQString(const fs::path &path)
 {
@@ -329,7 +329,7 @@ SpatialAssetResult SpatialAssetGenerator::generate(const fs::path &imagePath,
 {
     SpatialAssetResult result;
     try {
-        const fs::path directory = depthPath.parent_path() / "spatial-v3";
+        const fs::path directory = depthPath.parent_path() / "spatial-v4";
         result.backgroundPath = directory / "background.png";
         result.mattePath = directory / "matte.png";
         result.influencePath = directory / "influence.png";
@@ -342,13 +342,10 @@ SpatialAssetResult SpatialAssetGenerator::generate(const fs::path &imagePath,
             result.error = "空间素材输入不匹配";
             return result;
         }
-        const int width = std::min(source.cols, maximumWidth);
-        const int height = std::max(1, static_cast<int>(std::lround(
-            static_cast<double>(source.rows) * width / source.cols)));
-        if (height > 4096) {
-            result.error = "空间素材图片长宽比超出范围";
-            return result;
-        }
+        const double scale = std::min(1.0, double(maximumDimension)
+            / std::max(source.cols, source.rows));
+        const int width = std::max(1, static_cast<int>(std::lround(source.cols * scale)));
+        const int height = std::max(1, static_cast<int>(std::lround(source.rows * scale)));
 
         QFile metadataFile(toQString(metadataPath));
         if (metadataFile.open(QIODevice::ReadOnly)) {
@@ -373,7 +370,7 @@ SpatialAssetResult SpatialAssetGenerator::generate(const fs::path &imagePath,
         }
 
         cv::Mat photo, depth;
-        if (source.cols > width) {
+        if (source.size() != cv::Size(width, height)) {
             cv::resize(source, photo, cv::Size(width, height), 0, 0, cv::INTER_AREA);
             cv::resize(sourceDepth, depth, cv::Size(width, height), 0, 0,
                        cv::INTER_AREA);

@@ -1,96 +1,136 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import vm from 'node:vm';
-
 const source = readFileSync(new URL('./WallpaperPreviewService.qml', import.meta.url), 'utf8');
-const functions = source.slice(source.indexOf('    function begin('), source.indexOf('    property Timer loadingWatchdog:'));
+const functions = source.slice(source.indexOf('    function parse('), source.indexOf('    property Timer loadingWatchdog:'));
 function fixture() {
-    const calls = [], commits = [];
+    const commits = [], slides = [], themes = [];
     const state = {
-        active: false, pending: false, presented: false, previousDesktop: false,
-        available: true,
-        image: '', images: [], errorMessage: '', remainingSeconds: 60,
-        direction: 1, restoring: false, generation: 0, readyOutputs: [], abortPending: false,
-        ScreenLifecycle: { usableScreens: [{ name: "HDMI-1" }] },
+        active: false, pending: false, presented: false, available: true,
+        image: '', mode: 'image', imageCatalog: [], colorCatalog: [], thumbnailCatalog: {}, selectedImages: [],
+        errorMessage: '', direction: 1, readyOutputs: [], transitionSeed: 0,
+        intervalMinutes: 15, slideshowPlaying: false,
+        Catalog: { themes: [{id:"starfield"}, {id:"blackhole"}, {id:"weather"}],
+            theme(id) { return this.themes.find(item => item.id === id) || null; } },
+        ScreenLifecycle: { usableScreens: [{ name: 'HDMI-1' }, { name: 'DP-1' }] },
         loadingWatchdog: { restart() {}, stop() {} },
         WallpaperService: {
-            takeoverPending: false,
+            takeoverPending: false, slideshowImages: [], slideshowIntervalMinutes: 15,
             localPath: value => String(value).startsWith('/') ? String(value) : '',
             chooseImage(path) { commits.push(path); return true; },
+            chooseTheme(id) { themes.push(id); return true; },
+            setSlideshow(enabled, minutes, images) { slides.push({ enabled, minutes, images: JSON.parse(images) }); return true; },
         },
         AppearanceConfigService: { updateSpatialWallpaperEnabled() {} },
-        PlatformClient: {
-            capabilityProbeComplete: true,
-            supports: op => op === "wallpaper.preview.desktop",
-            request(op, payload, callback) { calls.push({ op, payload, callback }); }
-        },
+        SpatialWallpaperService: { previewEnabled: false, canceled: 0, started: 0,
+            cancelPreparation() { this.canceled++; this.previewEnabled = false; },
+            prepareForEnable() { this.started++; } },
     };
+    Object.defineProperty(state, 'images', { get() { return this.mode === 'theme' ? ['theme:starfield', 'theme:blackhole', 'theme:weather']
+        : this.mode === 'color' ? this.colorCatalog : this.imageCatalog; } });
     state.service = state;
-    vm.createContext(state);
-    vm.runInContext(functions, state);
-    return { state, calls, commits };
+    vm.createContext(state); vm.runInContext(functions, state);
+    return { state, commits, slides, themes };
 }
+const session = { images: ['/a.jpg', '/b.jpg', '/c.jpg'], colors: ['/wallpaper-colors/pink.png'],
+    thumbnails: {'/a.jpg': '/cache/a.webp'},
+    selectedImages: ['/a.jpg', '/c.jpg'], mode: 'image', intervalMinutes: 30 };
 {
-    const { state, calls, commits } = fixture();
-    state.begin('/one.jpg', '["/one.jpg","/two.jpg"]');
-    assert.deepEqual(commits, [], 'preview must not persist a wallpaper');
-    assert.equal(calls.length, 0, 'do not hide windows before the image is ready');
+    const { state, commits } = fixture();
+    assert.equal(state.beginSession('/a.jpg', JSON.stringify(JSON.stringify(session))), true);
+    assert.equal(state.thumbnailFor('/a.jpg'), '/cache/a.webp');
+    assert.equal(state.thumbnailFor('/b.jpg'), '', 'uncached pictures fall back to the original');
+    state.setThumbnails(JSON.stringify({'/a.jpg': '/cache/a.webp', '/b.jpg': '/cache/b.webp', '/foreign.jpg': '/cache/x.webp'}));
+    assert.equal(state.thumbnailFor('/b.jpg'), '/cache/b.webp');
+    assert.equal(state.thumbnailFor('/foreign.jpg'), '', 'cache paths must belong to the image catalog');
+    assert.equal(state.image, '/a.jpg', 'thumbnail updates never replace the actual wallpaper');
     state.imageReady('/stale.jpg', 'HDMI-1');
-    assert.equal(calls.length, 0, 'late decode must not reveal another image');
-    state.imageReady('/one.jpg', 'HDMI-1');
-    calls[0].callback({ ok: true, result: { previous: false } });
-    state.move(1);
-    assert.equal(state.image, '/two.jpg');
-    state.finish(false);
-    assert.equal(state.active, false);
-    assert.deepEqual(commits, [], 'cancel must leave the original wallpaper intact');
-    assert.equal(calls[1].payload.showing, false, 'restore the previous window visibility');
-    calls[1].callback({ ok: true });
-    assert.equal(state.restoring, false);
+    assert.equal(state.presented, false);
+    state.imageReady('/a.jpg', 'HDMI-1');
+    assert.equal(state.presented, false, 'wait for every screen');
+    state.imageReady('/a.jpg', 'DP-1');
+    assert.equal(state.presented, true);
+    state.select(1); assert.equal(state.image, '/b.jpg');
+    state.setMode('color'); assert.equal(state.image, '/wallpaper-colors/pink.png');
+    state.setMode('image'); assert.equal(state.image, '/a.jpg');
+    assert.equal(state.pending, true);
+    state.finish(false); assert.equal(state.active, false);
+    assert.equal(state.pending, false, 'cancel also works during loading');
+    assert.deepEqual(commits, [], 'browsing and cancel never persist');
 }
 {
-    const { state, calls, commits } = fixture();
-    state.begin('/one.jpg', '[]');
-    state.imageReady('/one.jpg', 'HDMI-1');
-    calls[0].callback({ ok: true, result: { previous: true } });
+    const { state, commits, slides } = fixture();
+    state.beginSession('/a.jpg', JSON.stringify({...session, mode: 'slideshow'}));
+    assert.equal(state.slideshowPlaying, true);
+    assert.equal(state.thumbnailFor('/a.jpg'), '/cache/a.webp', 'slideshow reuses the same thumbnail cache');
+    state.move(1); assert.equal(state.image, '/c.jpg', 'only selected pictures play');
+    state.toggleSelected('/c.jpg');
+    state.finish(true); assert.equal(state.active, true, 'cannot apply one-picture slideshow');
+    state.selectAll(); assert.equal(state.selectedImages.length, 3);
+    state.pending = false;
+    state.finish(true); assert.equal(state.active, false);
+    assert.equal(slides[0].minutes, 30);
+    assert.deepEqual(slides[0].images, session.images);
+    assert.deepEqual(commits, [], 'apply slideshow uses its own commit path');
+}
+{
+    const { state, commits } = fixture();
+    state.begin('/a.jpg', '["/a.jpg"]');
+    state.imageReady('/a.jpg', 'HDMI-1'); state.imageReady('/a.jpg', 'DP-1');
     state.finish(true);
-    assert.deepEqual(commits, ['/one.jpg']);
-    assert.equal(calls[1].payload.showing, true, 'already showing desktop must stay that way');
+    assert.deepEqual(commits, ['/a.jpg']);
+    state.begin('/broken.jpg', 'null'); state.imageFailed('/broken.jpg');
+    assert.equal(state.active, false); assert.ok(state.errorMessage);
+    state.available = false; assert.equal(state.begin('/a.jpg', '[]'), false);
 }
+console.log('wallpaper preview: catalogs, selection, multi-output readiness and rollback passed');
+
 {
-    const { state, calls, commits } = fixture();
-    state.begin('/broken.jpg', 'null');
-    state.imageFailed('/broken.jpg');
-    assert.equal(state.active, false);
-    assert.equal(calls.length, 0);
-    assert.deepEqual(commits, []);
-    assert.ok(state.errorMessage);
-}
-{
-    const { state, calls } = fixture();
-    state.begin('/one.jpg', '[]');
-    state.imageReady('/one.jpg', 'HDMI-1');
-    calls[0].callback({ ok: false, error: { message: 'offline' } });
-    assert.equal(state.active, false);
-    assert.equal(state.errorMessage, 'offline');
-}
-{
-    const { state, calls } = fixture();
-    state.ScreenLifecycle.usableScreens.push({ name: 'DP-1' });
-    state.begin('/one.jpg', '[]');
-    state.imageReady('/one.jpg', 'HDMI-1');
-    assert.equal(calls.length, 0, 'keep windows visible until every output decoded');
-    state.imageReady('/one.jpg', 'DP-1');
-    assert.equal(calls.length, 1);
-    calls[0].callback({ ok: true, result: { previous: false } });
+    const { state, commits } = fixture();
+    state.beginSession('/a.jpg', JSON.stringify(session));
+    assert.equal(state.chooseColor('/wallpaper-colors/custom.png'), true);
+    assert.equal(state.image, '/wallpaper-colors/custom.png');
+    assert.equal(state.mode, 'color');
+    assert.ok(state.colorCatalog.includes(state.image));
+    assert.deepEqual(commits, [], 'color changes remain a preview draft');
     state.finish(false);
-    calls[1].callback({ ok: true });
+    assert.deepEqual(commits, [], 'cancel keeps the applied wallpaper');
+}
+
+{
+    const { state, commits } = fixture();
+    state.beginSession('/a.jpg', JSON.stringify(session));
+    state.pending = false;
+    state.SpatialWallpaperService.previewEnabled = true;
+    state.finish(false);
+    assert.equal(state.SpatialWallpaperService.previewEnabled, false, 'closing discards spatial preview');
+    assert.equal(state.SpatialWallpaperService.started, 0, 'cancel cannot activate a wallpaper');
+    assert.deepEqual(commits, []);
 }
 {
-    const { state, calls } = fixture();
-    state.available = false;
-    assert.equal(state.begin('/one.jpg', '[]'), false);
-    assert.equal(calls.length, 0);
-    assert.match(state.errorMessage, /不支持/);
+    const { state, commits } = fixture();
+    state.beginSession('/a.jpg', JSON.stringify(session));
+    state.pending = false;
+    state.SpatialWallpaperService.previewEnabled = true;
+    state.finish(true);
+    assert.deepEqual(commits, ['/a.jpg']);
+    assert.equal(state.SpatialWallpaperService.started, 1, 'apply prepares the committed spatial wallpaper');
 }
-console.log('wallpaper preview rollback contracts: passed');
+
+{
+    const { state, commits, themes } = fixture();
+    assert.equal(state.beginSession('theme:invalid', JSON.stringify({...session, mode:'theme'})), false);
+    assert.equal(state.beginSession('theme:blackhole', JSON.stringify({...session, mode:'theme'})), true);
+    state.imageReady('theme:blackhole', 'HDMI-1');
+    assert.equal(state.pending, true, 'theme also waits for every output');
+    state.imageReady('theme:blackhole', 'DP-1');
+    assert.equal(state.pending, false);
+    state.finish(false);
+    assert.deepEqual(themes, [], 'cancel never commits a theme');
+    assert.deepEqual(commits, []);
+    state.beginSession('theme:weather', JSON.stringify({...session, mode:'theme'}));
+    state.imageReady('theme:weather', 'HDMI-1'); state.imageReady('theme:weather', 'DP-1');
+    state.finish(true);
+    assert.deepEqual(themes, ['weather']);
+    assert.deepEqual(commits, [], 'theme IDs never enter the image pipeline');
+}

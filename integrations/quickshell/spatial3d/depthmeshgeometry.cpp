@@ -101,7 +101,7 @@ void DepthMeshGeometry::setOutputAspect(float aspect)
 
 void DepthMeshGeometry::setSourceAspect(float aspect)
 {
-    const float bounded = std::clamp(aspect, 0.5f, 4.0f);
+    const float bounded = std::clamp(aspect, 0.01f, 100.0f);
     if (std::abs(m_sourceAspect - bounded) < 1e-5f) return;
     m_sourceAspect = bounded;
     emit sourceAspectChanged();
