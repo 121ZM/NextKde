@@ -14,6 +14,10 @@ PanelWindow {
     id: stage
 
     property bool listExpanded: true
+    // A hidden layer-shell surface can lose its native window and report a
+    // zero size. Do not keep gallery delegates alive across that transition.
+    readonly property bool previewContentReady: stage.visible
+        && stage.width > 0 && stage.height > 0
     property real depthPointerX: 0
     property real depthPointerY: 0
     HoverHandler {
@@ -85,9 +89,9 @@ PanelWindow {
         Behavior on opacity { NumberAnimation { duration: 160; easing.type: Easing.OutCubic } }
         x: (stage.width - width) / 2
         y: surface.y + surface.height + 12
-        width: Math.min(600, stage.width - 32)
-        height: Math.min(468, stage.height - y - 116, 32 + Math.ceil(Math.max(1,
-            WallpaperPreviewService.images.length) / 3) * 120)
+        width: Math.max(0, Math.min(600, stage.width - 32))
+        height: Math.max(0, Math.min(468, stage.height - y - 116, 32 + Math.ceil(Math.max(1,
+            WallpaperPreviewService.images.length) / 3) * 120))
         z: 0
         radius: 28
         material: "regular"
@@ -110,7 +114,8 @@ PanelWindow {
                 cellHeight: 120
                 flickableDirection: Flickable.VerticalFlick
                 boundsBehavior: Flickable.StopAtBounds
-                model: WallpaperPreviewService.images
+                model: stage.previewContentReady && width > 0 && height > 0
+                    ? WallpaperPreviewService.images : []
 
                 delegate: Item {
                     required property string modelData
@@ -147,7 +152,8 @@ PanelWindow {
                     Loader {
                         anchors.fill: parent
                         anchors.margins: 8
-                        active: WallpaperPreviewService.mode === "theme"
+                        active: stage.previewContentReady && width > 0 && height > 0
+                            && WallpaperPreviewService.mode === "theme"
                         sourceComponent: ThemeVisuals.ThemeWallpaperThumbnail {
                             themeId: modelData.slice(6)
                         }
