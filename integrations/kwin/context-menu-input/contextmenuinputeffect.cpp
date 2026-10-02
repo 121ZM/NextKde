@@ -1,6 +1,7 @@
 #include "contextmenuinputeffect.h"
 
 #include <input.h>
+#include <effect/effecthandler.h>
 #include <input_event.h>
 #include <input_event_spy.h>
 #include <keyboard_input.h>
@@ -8,6 +9,9 @@
 #include <workspace.h>
 #include <wayland_server.h>
 #include <wayland/seat.h>
+#include <wayland/surface.h>
+#include <wayland/textinput_v2.h>
+#include <wayland/textinput_v3.h>
 #include <xkb.h>
 #include <QDBusConnection>
 #include <QDBusMessage>
@@ -19,6 +23,7 @@
 
 #include <chrono>
 #include <optional>
+#include <cmath>
 
 #include <xkbcommon/xkbcommon-keysyms.h>
 
@@ -70,6 +75,56 @@ QVariantMap ContextMenuInputEffect::activeApplicationMenu() const
     return {{QStringLiteral("available"), !service.isEmpty() && !path.isEmpty()},
             {QStringLiteral("service"), service},
             {QStringLiteral("path"), path}};
+}
+
+QVariantMap ContextMenuInputEffect::clipboardAnchor(const QString &expectedWindowId) const
+{
+    if (!effects || !Workspace::self())
+        return {{QStringLiteral("available"), false}};
+
+    const QPointF pointer = effects->cursorPos();
+    QRectF anchor(pointer, QSizeF(0, 0));
+    QString source = QStringLiteral("pointer");
+    Window *target = Workspace::self()->activeWindow();
+    SeatInterface *seat = waylandServer() ? waylandServer()->seat() : nullptr;
+    const QUuid expected(expectedWindowId);
+    // An enabled text-input can outlive a focus transition. Require all three
+    // identities to agree, and never use the search panel's own input field.
+    if (!expected.isNull() && target && target->internalId() == expected
+        && target->surface() && seat
+        && seat->focusedKeyboardSurface() == target->surface()
+        && seat->focusedTextInputSurface() == target->surface()) {
+        const auto useCaret = [&](auto *textInput) {
+            if (!textInput || !textInput->isEnabled() || textInput->surface() != target->surface())
+                return false;
+            const auto local = textInput->cursorRectangle();
+            // Zero-width carets are valid; an absent/default 0x0 rectangle is
+            // not. Reject off-surface positions left behind by scrolled fields.
+            if (!std::isfinite(local.x()) || !std::isfinite(local.y())
+                || !std::isfinite(local.width()) || !std::isfinite(local.height())
+                || local.width() < 0 || local.height() <= 0)
+                return false;
+            const QPointF topLeft = target->mapFromLocal(local.topLeft());
+            const QPointF bottomRight = target->mapFromLocal(local.bottomRight());
+            const QRectF global(topLeft, bottomRight);
+            if (!target->frameGeometry().contains(global.center()))
+                return false;
+            anchor = global;
+            source = QStringLiteral("caret");
+            return true;
+        };
+        if (!useCaret(seat->textInputV3()))
+            useCaret(seat->textInputV2());
+    }
+    // PlacementArea excludes reserved panels and is evaluated for the output
+    // containing the chosen anchor on the current desktop.
+    const auto area = effects->clientArea(PlacementArea, anchor.center().toPoint());
+    return {{QStringLiteral("available"), true},
+            {QStringLiteral("source"), source},
+            {QStringLiteral("x"), anchor.x()}, {QStringLiteral("y"), anchor.y()},
+            {QStringLiteral("width"), anchor.width()}, {QStringLiteral("height"), anchor.height()},
+            {QStringLiteral("areaX"), area.x()}, {QStringLiteral("areaY"), area.y()},
+            {QStringLiteral("areaWidth"), area.width()}, {QStringLiteral("areaHeight"), area.height()}};
 }
 
 bool ContextMenuInputEffect::paste(const QString &expectedWindowId)
