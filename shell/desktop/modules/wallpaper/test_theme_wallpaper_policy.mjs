@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import {covered, cadence} from '../wallpaper/ThemeWallpaperPolicy.mjs';
+import {covered, cadence} from './ThemeWallpaperPolicy.mjs';
 const screen = {name:'DP-1', x:0, y:0, width:1920, height:1080};
 const app = {screenName:'DP-1', isFullscreen:true, isVisible:true, desktopIds:['one']};
 assert.equal(covered(screen, [app], 'one'), true);
