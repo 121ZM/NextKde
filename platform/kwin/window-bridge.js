@@ -569,6 +569,16 @@ function scheduleSnapshot() {
     snapshotTimer.start();
 }
 
+// 收放类命令（minimize/engage/park 等）处理完立即发快照：窗口状态已经
+// 变了，迟到的快照让侧栏卡片晚 ~160-200ms 才出现（120ms 定时器 + QML
+// 40ms 防抖重建），与窗口飞行不同拍——"收成卡片的动画和卡片的出现
+// 不同时"的根源。零延迟补拍不绕过 QML 侧节流（那边自会折叠重复重建），
+// 定时器保留作常规变化（标题/几何/桌面切换）的兜底节奏。
+function publishSnapshotNow() {
+    snapshotTimer.stop();
+    snapshot();
+}
+
 // Publish at a reduced rate while a window is moving. A drag emits a
 // geometry signal per compositor frame, and every published snapshot runs
 // the bridge's icon-resolution pass plus a full window-model rebuild in
@@ -813,7 +823,7 @@ function handleCommand(serialized) {
         // 回执锚在焦点窗：被点组在入队→执行间隙被关掉（focused 落空）=
         // 交换没发生，shell 侧据此复位 engaging 卡（"卡片消失"自愈）
         publishAction(command, focused !== null);
-        scheduleSnapshot();
+        publishSnapshotNow();
         return;
     }
 
@@ -840,7 +850,7 @@ function handleCommand(serialized) {
         print("[QuickshellWindowBridge] minimize-group collected=" + collected
               + " of " + ids.length);
         publishAction(command, collected > 0);
-        scheduleSnapshot();
+        publishSnapshotNow();
         return;
     }
 
@@ -906,7 +916,9 @@ function handleCommand(serialized) {
     }
 
     publishAction(command, true);
-    scheduleSnapshot();
+    // minimize/park/close 等改收放状态的命令：立即补拍（见
+    // publishSnapshotNow 注释——迟到的快照 = 卡片晚 ~200ms 出现）
+    publishSnapshotNow();
 }
 
 function watchWindow(window) {
