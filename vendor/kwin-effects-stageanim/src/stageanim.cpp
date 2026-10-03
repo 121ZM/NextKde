@@ -19,6 +19,7 @@
 #include <QStandardPaths>
 #include <QUuid>
 
+#include <algorithm>
 #include <cmath>
 
 using namespace std::chrono_literals;
@@ -160,7 +161,11 @@ void StageAnimEffect::reconfigure(ReconfigureFlags)
 {
     const KConfigGroup grp = effects->config()->group(QStringLiteral("Effect-stageanim"));
     const std::chrono::milliseconds d(grp.readEntry<int>("AnimationDuration", 420));
+#ifdef KOS_KWIN_PAINT_TIME_API
     m_duration = std::chrono::milliseconds(static_cast<int>(animationTime(d)));
+#else
+    m_duration = animationTime(d);
+#endif
 
     const int x = grp.readEntry<int>("TargetX", -1);
     const int y = grp.readEntry<int>("TargetY", -1);
@@ -205,23 +210,43 @@ void StageAnimEffect::reconfigure(ReconfigureFlags)
         m_easing.setType(QEasingCurve::OutCubic);
 }
 
+#ifdef KOS_KWIN_PAINT_TIME_API
 void StageAnimEffect::prePaintScreen(ScreenPrePaintData &data, std::chrono::milliseconds presentTime)
+#else
+void StageAnimEffect::prePaintScreen(ScreenPrePaintData &data)
+#endif
 {
     // Mark the screen as transformed so the moving window is repainted fully.
     data.mask |= PAINT_SCREEN_WITH_TRANSFORMED_WINDOWS;
 
+#ifdef KOS_KWIN_PAINT_TIME_API
     effects->prePaintScreen(data, presentTime);
+#else
+    effects->prePaintScreen(data);
+#endif
 }
 
+#ifdef KOS_KWIN_PAINT_TIME_API
 void StageAnimEffect::prePaintWindow(RenderView *view, EffectWindow *w, WindowPrePaintData &data, std::chrono::milliseconds presentTime)
+#else
+void StageAnimEffect::prePaintWindow(RenderView *view, EffectWindow *w, WindowPrePaintData &data)
+#endif
 {
     auto animationIt = m_animations.find(w);
     if (animationIt != m_animations.end()) {
+#ifdef KOS_KWIN_PAINT_TIME_API
         (*animationIt).timeLine.advance(presentTime);
+#else
+        (*animationIt).timeLine.advance(view);
+#endif
         data.setTransformed();
     }
 
+#ifdef KOS_KWIN_PAINT_TIME_API
     effects->prePaintWindow(view, w, data, presentTime);
+#else
+    effects->prePaintWindow(view, w, data);
+#endif
 }
 
 // 触发时解析该窗口的目标矩形，优先级：
@@ -270,6 +295,7 @@ void StageAnimEffect::resolveTarget(EffectWindow *w, StageAnimAnimation &anim,
 
 void StageAnimEffect::apply(EffectWindow *w, int mask, WindowPaintData &data, WindowQuadList &quads)
 {
+    Q_UNUSED(mask)
     auto animationIt = m_animations.constFind(w);
     if (animationIt == m_animations.constEnd())
         return;

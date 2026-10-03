@@ -42,8 +42,13 @@ public:
     StageAnimEffect();
 
     void reconfigure(ReconfigureFlags) override;
+#ifdef KOS_KWIN_PAINT_TIME_API
     void prePaintScreen(ScreenPrePaintData &data, std::chrono::milliseconds presentTime) override;
     void prePaintWindow(RenderView *view, EffectWindow *w, WindowPrePaintData &data, std::chrono::milliseconds presentTime) override;
+#else
+    void prePaintScreen(ScreenPrePaintData &data) override;
+    void prePaintWindow(RenderView *view, EffectWindow *w, WindowPrePaintData &data) override;
+#endif
     void postPaintScreen() override;
     bool isActive() const override;
 

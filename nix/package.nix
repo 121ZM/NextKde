@@ -17,6 +17,7 @@ let
   kos-surface-shape = pkgs.callPackage ./kos-surface-shape.nix { inherit src; };
   kos-spatial3d = pkgs.callPackage ./kos-spatial3d.nix { inherit src; };
   kwin-dock-window-animation = pkgs.callPackage ./kwin-dock-window-animation.nix { inherit src; };
+  kwin-stage-animation = pkgs.callPackage ./kwin-stage-animation.nix { inherit src; };
   kwin-context-menu-input = pkgs.callPackage ./kwin-context-menu-input.nix { inherit src; };
   kwin-effects-glass = pkgs.callPackage ./kwin-effects-glass.nix { inherit src; };
   kwin-kos-bridge = pkgs.callPackage ./kwin-kos-bridge.nix { inherit src; };
@@ -136,7 +137,7 @@ stdenv.mkDerivation {
 
   passthru = {
     inherit shell-data-service kos-settings kos-platform kos-spatial3d kos-surface-shape kosctl
-            kwin-dock-window-animation kwin-context-menu-input kwin-effects-glass
+            kwin-dock-window-animation kwin-stage-animation kwin-context-menu-input kwin-effects-glass
             kwin-kos-bridge kwin-kos-decoration;
     inherit patched-platform-service patched-shell-service;
     weather = if buildWeather then kos-weather else null;

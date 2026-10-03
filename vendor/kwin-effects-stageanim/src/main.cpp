@@ -12,7 +12,7 @@ KWIN_EFFECT_FACTORY_SUPPORTED_ENABLED(StageAnimEffect,
                                       "metadata.json",
                                       return StageAnimEffect::supported();
                                       ,
-                                      return true;)
+                                      return false;)
 
 } // namespace KWin
 
