@@ -7,6 +7,7 @@
 #include <keyboard_input.h>
 #include <window.h>
 #include <workspace.h>
+#include <virtualdesktops.h>
 #include <wayland_server.h>
 #include <wayland/seat.h>
 #include <wayland/surface.h>
@@ -120,7 +121,12 @@ QVariantMap ContextMenuInputEffect::clipboardAnchor(const QString &expectedWindo
     }
     // PlacementArea excludes reserved panels and is evaluated for the output
     // containing the chosen anchor on the current desktop.
-    const auto area = effects->clientArea(PlacementArea, anchor.center().toPoint());
+    // 6.6 没有 (option, QPoint) 重载：显式给锚点所在输出 + 当前桌面
+    //（上游构建的 KWin 签名不同，两参数 QPoint 版在 6.6 编不过）。
+    auto *desktopManager = VirtualDesktopManager::self();
+    const auto area = effects->clientArea(PlacementArea,
+        effects->screenAt(anchor.center().toPoint()),
+        desktopManager ? desktopManager->currentDesktop() : nullptr);
     return {{QStringLiteral("available"), true},
             {QStringLiteral("source"), source},
             {QStringLiteral("x"), anchor.x()}, {QStringLiteral("y"), anchor.y()},

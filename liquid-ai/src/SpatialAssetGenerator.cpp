@@ -11,10 +11,11 @@
 
 #include <opencv2/imgcodecs.hpp>
 #include <opencv2/imgproc.hpp>
-// OpenCV 5 moved the geometry helpers (cv::boundingRect, cv::DIST_L2) into a
-// header that does not exist in 4.x, where imgproc.hpp already declares them.
+// OpenCV 5 把 Point/Rect 拆进 geometry 模块；4.x 里它们在 core（imgproc 已连带）。
 #if __has_include(<opencv2/geometry/2d.hpp>)
 #include <opencv2/geometry/2d.hpp>
+#else
+#include <opencv2/core.hpp>
 #endif
 
 #include <algorithm>
