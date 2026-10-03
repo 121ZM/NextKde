@@ -31,6 +31,20 @@
 namespace KWin
 {
 
+// The current-desktop overload changed after KWin 6.6. Keep the check
+// dependent on Handler so the unavailable overload is discarded at compile time.
+template<typename Handler>
+static auto placementAreaAt(Handler *handler, const QPoint &point)
+{
+    if constexpr (requires { handler->clientArea(PlacementArea, point); }) {
+        return handler->clientArea(PlacementArea, point);
+    } else {
+        auto *manager = VirtualDesktopManager::self();
+        return handler->clientArea(PlacementArea, handler->screenAt(point),
+                                   manager ? manager->currentDesktop() : nullptr);
+    }
+}
+
 // InputEventSpy runs before KWin's input filters, observes every pointer
 // button change, and has no return value with which it could consume input.
 class ContextMenuPointerSpy final : public InputEventSpy
@@ -121,12 +135,7 @@ QVariantMap ContextMenuInputEffect::clipboardAnchor(const QString &expectedWindo
     }
     // PlacementArea excludes reserved panels and is evaluated for the output
     // containing the chosen anchor on the current desktop.
-    // 6.6 没有 (option, QPoint) 重载：显式给锚点所在输出 + 当前桌面
-    //（上游构建的 KWin 签名不同，两参数 QPoint 版在 6.6 编不过）。
-    auto *desktopManager = VirtualDesktopManager::self();
-    const auto area = effects->clientArea(PlacementArea,
-        effects->screenAt(anchor.center().toPoint()),
-        desktopManager ? desktopManager->currentDesktop() : nullptr);
+    const auto area = placementAreaAt(effects, anchor.center().toPoint());
     return {{QStringLiteral("available"), true},
             {QStringLiteral("source"), source},
             {QStringLiteral("x"), anchor.x()}, {QStringLiteral("y"), anchor.y()},
