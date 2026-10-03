@@ -73,8 +73,7 @@ struct GeometryRule {
 //
 // This is the only thing in the plugin that writes anywhere, and it writes only
 // its own file: the user's window-buttons.json is hand-written and is never
-// opened for writing (the rule the repo states in
-// docs/window-buttons-metrics-plan.md).
+// opened for writing.
 class WindowRuleStore
 {
 public:

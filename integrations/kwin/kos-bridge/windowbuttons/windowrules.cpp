@@ -22,7 +22,7 @@ namespace
 
 // Where the plugin's own file lives. A machine-written file belongs beside the
 // rest of the session's data rather than in ~/.config, which holds what the user
-// wrote (see docs/window-buttons-metrics-plan.md).
+// wrote.
 constexpr auto RulesFileName = "/kos/window-buttons-rules.json";
 
 // Refuse to read a file this size: it is not one of ours, and parsing it on the
