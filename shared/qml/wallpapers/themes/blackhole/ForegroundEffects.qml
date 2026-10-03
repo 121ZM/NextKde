@@ -1,7 +1,5 @@
 import QtQuick
 
-// Transparent shared-clock effects. The shell places the near pass above cards;
-// this Item adds no pointer handlers and therefore cannot intercept input.
 ShaderEffect {
     id: root
     property string themeId: "starfield"

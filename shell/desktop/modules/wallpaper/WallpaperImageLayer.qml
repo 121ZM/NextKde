@@ -1,5 +1,5 @@
 import QtQuick
-import qs.desktop.modules.deskcenter
+import qs.desktop.modules.common
 import "../../../Kos/Ui/foundation/WallpaperCatalog.js" as WallpaperCatalog
 
 // Ordinary wallpaper for every output. Only a switch briefly keeps two

@@ -41,7 +41,9 @@ QtObject {
     }
 
     readonly property string mode: config.mode === "theme" ? "theme" : "image"
-    readonly property string themeId: Catalog.theme(config.themeId) ? config.themeId : "starfield"
+    // Pack themes (marketplace) are valid ids too; the catalog only knows the
+    // built-ins.
+    readonly property string themeId: (Catalog.theme(config.themeId) || ThemePackService.has(config.themeId)) ? config.themeId : "starfield"
     readonly property bool themeEconomical: config.themeEconomical
     readonly property bool themeAnimated: config.themeAnimated
     readonly property real themeSpeed: Math.max(0.1, Math.min(1.5, config.themeSpeed))
@@ -139,7 +141,7 @@ QtObject {
     }
 
     function chooseTheme(id) {
-        if (!Catalog.theme(id) || takeoverPending) return false
+        if ((!Catalog.theme(id) && !ThemePackService.has(id)) || takeoverPending) return false
         SpatialWallpaperService.cancelPreparation()
         AppearanceConfigService.updateSpatialWallpaperEnabled(false)
         if (mode !== "theme" || themeId !== id) {
@@ -264,7 +266,8 @@ QtObject {
                 || (mode !== "theme" && !WallpaperColorSource.ready) || proxyPending
                 || !takeoverAvailable)
             return
-        const color = mode === "theme" ? Catalog.theme(themeId).accent : WallpaperColorSource.primary.toString()
+        const color = mode === "theme" ? (Catalog.theme(themeId)?.accent || ThemePackService.accent(themeId))
+            : WallpaperColorSource.primary.toString()
         const accent = color.length === 9 && color.startsWith("#")
             ? "#" + color.slice(3) : color
         const dark = mode === "theme" || WallpaperColorSource.darkMode

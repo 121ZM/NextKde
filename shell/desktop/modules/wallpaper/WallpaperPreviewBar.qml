@@ -154,7 +154,23 @@ PanelWindow {
                         anchors.margins: 8
                         active: stage.previewContentReady && width > 0 && height > 0
                             && WallpaperPreviewService.mode === "theme"
-                        sourceComponent: ThemeVisuals.ThemeWallpaperThumbnail {
+                        // Packs carry their own preview image; built-ins use
+                        // the shared static plate.
+                        sourceComponent: ThemePackService.pack(modelData.slice(6))?.preview
+                            ? packPreview : builtinPreview
+                    }
+                    Component {
+                        id: packPreview
+                        Image {
+                            source: ThemePackService.previewUrl(modelData.slice(6))
+                            fillMode: Image.PreserveAspectCrop
+                            asynchronous: true
+                            smooth: true
+                        }
+                    }
+                    Component {
+                        id: builtinPreview
+                        ThemeVisuals.ThemeWallpaperThumbnail {
                             themeId: modelData.slice(6)
                         }
                     }
@@ -163,7 +179,8 @@ PanelWindow {
                         anchors.horizontalCenter: parent.horizontalCenter
                         anchors.bottom: parent.bottom
                         anchors.bottomMargin: 14
-                        text: WallpaperCatalog.theme(modelData.slice(6))?.label || ""
+                        text: WallpaperCatalog.theme(modelData.slice(6))?.label
+                            || ThemePackService.pack(modelData.slice(6))?.name || ""
                         color: "white"
                         font.pixelSize: 11
                     }

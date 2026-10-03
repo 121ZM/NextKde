@@ -16,7 +16,11 @@ QtObject {
     property var imageCatalog: []
     property var colorCatalog: []
     property var selectedImages: []
-    readonly property var images: mode === "theme" ? Catalog.themes.map(item => "theme:" + item.id)
+    readonly property var images: mode === "theme" ? Catalog.themes
+        .map(item => "theme:" + item.id)
+        .concat(ThemePackService.packs
+            .map(item => "theme:" + item.id)
+            .filter(id => !Catalog.theme(id.slice(6))))
         : mode === "color" ? colorCatalog : imageCatalog
     property int intervalMinutes: 15
     property string errorMessage: ""
@@ -66,7 +70,8 @@ QtObject {
         if (pending || WallpaperService.takeoverPending) return false
         const session = parse(rawSession)
         const isTheme = session && session.mode === "theme"
-        const local = isTheme && String(path).startsWith("theme:") && Catalog.theme(String(path).slice(6))
+        const local = isTheme && String(path).startsWith("theme:")
+            && (Catalog.theme(String(path).slice(6)) || ThemePackService.has(String(path).slice(6)))
             ? String(path) : isTheme ? "" : WallpaperService.localPath(path)
         if (!session || !local) return false
         imageCatalog = paths(session.images)

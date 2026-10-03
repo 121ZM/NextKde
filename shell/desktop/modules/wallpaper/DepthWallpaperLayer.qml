@@ -1,5 +1,5 @@
 import QtQuick
-import qs.desktop.modules.deskcenter
+import qs.desktop.modules.common
 import qs.desktop.modules.common
 
 // GPU-only wallpaper presentation. The worker prepares optional layered

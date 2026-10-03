@@ -91,7 +91,8 @@ QtObject {
     }
     function refreshColors() {
         const theme = Catalog.theme(themeId)
-        WallpaperColorSource.proceduralPrimary = active && theme ? theme.accent : ""
+        WallpaperColorSource.proceduralPrimary = active
+            ? (theme ? theme.accent : ThemePackService.accent(themeId)) : ""
     }
     function pollLock() {
         if (lockPollPending || !PlatformClient.supports("session.visibility")) return

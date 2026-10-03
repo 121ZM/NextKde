@@ -28,6 +28,9 @@ Item {
         anchors.fill: parent
         active: root.active && root.rendererEnabled
         sourceComponent: ThemeVisuals.ThemeWallpaperScene {
+            // Pack themes (marketplace) resolve through ThemePackService; the
+            // shared module itself stays free of deskcenter imports.
+            packResolver: ThemePackService.entryUrl
             readonly property var interaction: ThemeWallpaperService.interactionByScreen[root.targetScreen?.name] || {}
             pointer: Qt.vector4d((interaction.x ?? -10000)/Math.max(1,width),
                 (interaction.y ?? -10000)/Math.max(1,height),interaction.inside ? 1 : 0,0)

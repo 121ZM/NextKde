@@ -1,6 +1,7 @@
 import QtQuick
+// 显式限定自身目录类型:模块目录树内隐式解析会被短路(见 main.qml 注释)。
+import "." as Theme
 
-// Cinematic image material with shared interactive particles in both depth passes.
 Item {
     id: root
     property string themeId: "underwater"
@@ -19,7 +20,7 @@ Item {
     Loader {
         anchors.fill: parent
         active: root.themeId === "forest"
-        sourceComponent: ForestFireflies {
+        sourceComponent: Theme.ForestFireflies {
             phase: root.phase
             foreground: root.foreground
             economical: root.economical
