@@ -113,7 +113,7 @@ DockWindowAnimationEffect::DockWindowAnimationEffect()
 
     auto bus = QDBusConnection::sessionBus();
     if (!bus.registerObject(QString::fromLatin1(dbusPath), this,
-                            QDBusConnection::ExportAllSlots
+                            QDBusConnection::ExportScriptableSlots
                                 | QDBusConnection::ExportAllSignals)) {
         qCWarning(KWIN_KOS_DOCK_ANIMATION)
             << "Unable to register Dock animation D-Bus endpoint";

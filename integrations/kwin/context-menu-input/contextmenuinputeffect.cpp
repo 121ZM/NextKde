@@ -7,6 +7,7 @@
 #include <keyboard_input.h>
 #include <window.h>
 #include <workspace.h>
+#include <virtualdesktops.h>
 #include <wayland_server.h>
 #include <wayland/seat.h>
 #include <wayland/surface.h>
@@ -29,6 +30,20 @@
 
 namespace KWin
 {
+
+// The current-desktop overload changed after KWin 6.6. Keep the check
+// dependent on Handler so the unavailable overload is discarded at compile time.
+template<typename Handler>
+static auto placementAreaAt(Handler *handler, const QPoint &point)
+{
+    if constexpr (requires { handler->clientArea(PlacementArea, point); }) {
+        return handler->clientArea(PlacementArea, point);
+    } else {
+        auto *manager = VirtualDesktopManager::self();
+        return handler->clientArea(PlacementArea, handler->screenAt(point),
+                                   manager ? manager->currentDesktop() : nullptr);
+    }
+}
 
 // InputEventSpy runs before KWin's input filters, observes every pointer
 // button change, and has no return value with which it could consume input.
@@ -54,7 +69,9 @@ ContextMenuInputEffect::ContextMenuInputEffect()
 {
     QDBusConnection::sessionBus().registerObject(
         QStringLiteral("/KOSContextMenuInput"), this,
-        QDBusConnection::ExportAllSlots);
+        // 只导出 Q_SCRIPTABLE 业务槽：ExportAllSlots 连 deleteLater 一起导
+        // 给会话总线（任意进程可打死特效，见头注释）
+        QDBusConnection::ExportScriptableSlots);
     m_pointerSpy = std::make_unique<ContextMenuPointerSpy>(this);
     installPointerSpy();
 }
@@ -118,7 +135,7 @@ QVariantMap ContextMenuInputEffect::clipboardAnchor(const QString &expectedWindo
     }
     // PlacementArea excludes reserved panels and is evaluated for the output
     // containing the chosen anchor on the current desktop.
-    const auto area = effects->clientArea(PlacementArea, anchor.center().toPoint());
+    const auto area = placementAreaAt(effects, anchor.center().toPoint());
     return {{QStringLiteral("available"), true},
             {QStringLiteral("source"), source},
             {QStringLiteral("x"), anchor.x()}, {QStringLiteral("y"), anchor.y()},
