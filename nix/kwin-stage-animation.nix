@@ -9,7 +9,7 @@
 stdenv.mkDerivation {
   pname = "kwin-stage-animation";
   version = "unstable";
-  src = "${src}/vendor/kwin-effects-stageanim";
+  src = "${src}/kwin/kwin-effects-stageanim";
 
   nativeBuildInputs = [
     cmake

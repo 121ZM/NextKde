@@ -9,7 +9,7 @@
 stdenv.mkDerivation {
   pname = "kwin-glass";
   version = "unstable";
-  src = "${src}/vendor/kwin-effects-glass";
+  src = "${src}/kwin/glass-effect";
 
   nativeBuildInputs = [
     cmake

@@ -13,10 +13,10 @@ stdenv.mkDerivation {
     version = "unstable";
     src = "${src}/platform";
 
-    # The standalone AI library is kept beside `platform/` in the source
+    # The standalone AI library lives at `services/ai/` in the source
     # tree, while this derivation builds the platform subdirectory alone.
     postPatch = ''
-      cp -r ${src}/liquid-ai liquid-ai
+      cp -r ${src}/services/ai services/ai
     '';
 
     nativeBuildInputs = [
