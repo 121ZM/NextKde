@@ -7,9 +7,9 @@
 }:
 
 stdenv.mkDerivation {
-  pname = "kwin-kos-bridge";
+  pname = "kwin-context-menu-input";
   version = "unstable";
-  src = "${src}/integrations/kwin/kos-bridge";
+  src = "${src}/kwin/context-menu-input";
 
   nativeBuildInputs = [
     cmake
@@ -19,14 +19,13 @@ stdenv.mkDerivation {
   buildInputs = [
     kdePackages.kwin
     kdePackages.qtbase
-    kdePackages.qttools
   ];
 
   cmakeFlags = [ "-DCMAKE_BUILD_TYPE=Release" ];
   dontWrapQtApps = true;
 
   meta = with lib; {
-    description = "KOS Bridge KWin effect - draws window buttons on CSD windows";
+    description = "KWin effect for context menu outside-click dismiss";
     homepage = "https://gitee.com/xiaoyintx_ciallo/test";
     license = licenses.gpl3;
     platforms = platforms.linux;

@@ -7,9 +7,9 @@
 }:
 
 stdenv.mkDerivation {
-  pname = "kwin-context-menu-input";
+  pname = "kwin-kos-decoration";
   version = "unstable";
-  src = "${src}/integrations/kwin/context-menu-input";
+  src = "${src}/kwin/kos-decoration";
 
   nativeBuildInputs = [
     cmake
@@ -17,7 +17,8 @@ stdenv.mkDerivation {
   ];
 
   buildInputs = [
-    kdePackages.kwin
+    kdePackages.kdecoration
+    kdePackages.kcoreaddons
     kdePackages.qtbase
   ];
 
@@ -25,9 +26,9 @@ stdenv.mkDerivation {
   dontWrapQtApps = true;
 
   meta = with lib; {
-    description = "KWin effect for context menu outside-click dismiss";
+    description = "KOS window decoration for KWin - draws the title bar and no buttons";
     homepage = "https://gitee.com/xiaoyintx_ciallo/test";
-    license = licenses.gpl3;
+    license = licenses.mit;
     platforms = platforms.linux;
   };
 }
