@@ -23,7 +23,7 @@ find_package(WaylandScanner REQUIRED)
 find_package(Wayland REQUIRED COMPONENTS Client)
 find_package(Qt6 6.5 REQUIRED COMPONENTS Core Gui GuiPrivate Qml Quick WaylandClient)
 
-set(KOS_SURFACE_PROTOCOL_FILE "${CMAKE_CURRENT_SOURCE_DIR}/../../../protocols/kos-surface-shape-v1.xml"
+set(KOS_SURFACE_PROTOCOL_FILE "${CMAKE_CURRENT_SOURCE_DIR}/kos-surface-shape-v1.xml"
     CACHE FILEPATH "Surface shape Wayland protocol")
 set(protocol_sources)
 ecm_add_wayland_client_protocol(protocol_sources

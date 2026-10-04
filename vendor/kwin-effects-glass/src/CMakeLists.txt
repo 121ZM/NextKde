@@ -62,7 +62,7 @@ set(glass_SOURCES
 
 find_package(WaylandScanner REQUIRED)
 ecm_add_wayland_server_protocol(glass_SOURCES
-    PROTOCOL "${CMAKE_CURRENT_SOURCE_DIR}/../../../protocols/kos-surface-shape-v1.xml"
+    PROTOCOL "${CMAKE_CURRENT_SOURCE_DIR}/../../../integrations/quickshell/surface-shape/kos-surface-shape-v1.xml"
     BASENAME kos-surface-shape-v1)
 
 kconfig_add_kcfg_files(glass_SOURCES
