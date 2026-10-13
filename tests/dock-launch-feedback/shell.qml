@@ -52,6 +52,13 @@ FloatingWindow {
             if (window.phase === 0) {
                 DockLaunchService.begin(icon.appId)
                 window.check(icon._launching && icon._launchBouncing, "launch starts immediately")
+                const records = WindowService.records.slice()
+                records.push({identity: {desktopId: icon.appId, name: "Probe", iconSource: ""},
+                    rawAppId: icon.appId, windowId: "probe-window", title: "Probe", toplevel: {
+                        activated: false, minimized: false, fullscreen: false}})
+                WindowService.records = records
+                WindowService.revision++
+                window.check(icon._launching, "immediate window readiness preserves visible launch feedback")
             } else if (window.phase === 2) {
                 window.check(icon._launchLift < -1, "launch has visible workspace lift")
                 host.magnificationPointer = Qt.point(325, 330)
@@ -69,18 +76,9 @@ FloatingWindow {
                     window.check(Math.abs((icon.vertical ? (icon.dockEdge === "right" ? anchor.x + anchor.width : anchor.x)
                             : anchor.y + anchor.height) - expected) < 0.01, "label follows artwork edge in same frame")
                 }
-            } else if (window.phase === 4) {
-                const records = WindowService.records.slice()
-                records.push({identity: {desktopId: icon.appId, name: "Probe", iconSource: ""},
-                    rawAppId: icon.appId, windowId: "probe-window", title: "Probe", toplevel: {
-                        activated: false, minimized: false, fullscreen: false}})
-                WindowService.records = records
-                WindowService.revision++
-                window.check(!icon._launching, "window readiness ends pending state")
-                window.check(icon._launchBouncing, "readiness completes current flight")
             } else if (window.phase === 6) {
-                window.check(!icon._launchBouncing && icon._launchLift === 0,
-                    "window readiness lands within 130ms")
+                DockLaunchService.reconcile()
+                window.check(!icon._launching, "ready window ends pending after minimum feedback")
             } else if (window.phase === 10) {
                 window.check(!icon._launchBouncing && icon._launchLift === 0,
                     "landing settles exactly")
