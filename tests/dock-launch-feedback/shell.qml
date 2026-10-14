@@ -2,6 +2,7 @@ import QtQuick
 import Quickshell
 import qs.desktop.modules.common
 import qs.desktop.modules.dock
+import "Kos/Ui"
 
 FloatingWindow {
     id: window
@@ -19,6 +20,8 @@ FloatingWindow {
         id: host
         anchors.fill: parent
         property point magnificationPointer: Qt.point(300, 300)
+        property bool launchAnimationVisible: true
+        readonly property alias nameLabel: sharedLabel
         function magnificationFor(item) { return 0.5 }
         function spreadFor(item) { return 0 }
         function hoverFor(item) { return true }
@@ -76,6 +79,19 @@ FloatingWindow {
                     window.check(Math.abs((icon.vertical ? (icon.dockEdge === "right" ? anchor.x + anchor.width : anchor.x)
                             : anchor.y + anchor.height) - expected) < 0.01, "label follows artwork edge in same frame")
                 }
+            } else if (window.phase === 4) {
+                AppTheme.reduceMotion = true
+                window.check(!icon._launchBouncing && icon._launchLift === 0,
+                    "reduced motion stops bounce without clearing launch state")
+                window.check(icon._launching, "reduced motion preserves pending launch")
+                AppTheme.reduceMotion = false
+                window.check(icon._launchBouncing, "pending launch resumes when motion is enabled")
+                host.launchAnimationVisible = false
+                window.check(!icon._launchBouncing && icon._launchLift === 0,
+                    "hidden Dock stops the animation driver")
+                window.check(icon._launching, "hiding does not cancel the launch request")
+                host.launchAnimationVisible = true
+                window.check(icon._launchBouncing, "visible Dock resumes pending launch feedback")
             } else if (window.phase === 6) {
                 DockLaunchService.reconcile()
                 window.check(!icon._launching, "ready window ends pending after minimum feedback")

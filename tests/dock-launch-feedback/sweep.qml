@@ -59,6 +59,7 @@ PanelWindow {
         id: host
         anchors.fill: parent
         property point magnificationPointer: Qt.point(0, 0)
+        readonly property alias nameLabel: name
         property var frame: ({ entries: [], byItem: new Map() })
         function hoverFor(item) { return false } // labels must not rely on exact hover hits
         function magnificationFor(item) { return frame.byItem.get(item)?.progress ?? 0 }
